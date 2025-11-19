@@ -1,10 +1,11 @@
-# app.py - Simple manual paste approach
+# app.py - Automatic transcript → feedback
 
 import streamlit as st
 from openai import OpenAI
 import streamlit.components.v1 as components
 import time
 import json
+from urllib.parse import unquote
 
 # Configuration
 FEEDBACK_ASSISTANTS = {
@@ -14,11 +15,12 @@ FEEDBACK_ASSISTANTS = {
 MRS_MILLER_PROMPT_ID = "pmpt_691cc606dfb4819491acd1328e0488dd0854e783a6e7f3ec"
 PROMPT_VERSION = "4"
 
+
 class VPERealtimeApp:
     def __init__(self):
         self.setup_openai()
         self.init_session_state()
-    
+
     def setup_openai(self):
         """Initialize OpenAI client."""
         try:
@@ -27,49 +29,82 @@ class VPERealtimeApp:
         except KeyError:
             st.error("OpenAI API key not found.")
             st.stop()
-    
+
     def init_session_state(self):
         """Initialize session state."""
         if "conversation_active" not in st.session_state:
             st.session_state.conversation_active = True
-    
+
+    # ---------- URL transcript handling ----------
+
+    def check_for_incoming_transcript(self):
+        """
+        Look for a transcript passed in the URL query params by the frontend JS
+        and store it into session_state["transcript_data"].
+        """
+        params = st.experimental_get_query_params()
+        raw = params.get("transcript")
+
+        # Only parse if we haven't already
+        if raw and "transcript_data" not in st.session_state:
+            try:
+                # experimental_get_query_params returns lists
+                raw_value = raw[0] if isinstance(raw, list) else raw
+                decoded = unquote(raw_value)
+                transcript_data = json.loads(decoded)
+
+                if isinstance(transcript_data, list) and len(transcript_data) > 0:
+                    st.session_state["transcript_data"] = transcript_data
+                else:
+                    st.warning("Transcript from URL was empty or malformed.")
+            except Exception as e:
+                st.warning(f"Could not parse transcript from URL: {e}")
+
+    def clear_query_params(self):
+        """Remove all query params (used when starting a new session)."""
+        try:
+            st.experimental_set_query_params()  # clears all params
+        except Exception:
+            pass
+
+    # ---------- Realtime voice session ----------
+
     def create_realtime_session(self):
         """Create ephemeral token with input transcription."""
         try:
             import requests
-            
+
             response = requests.post(
                 "https://api.openai.com/v1/realtime/sessions",
                 headers={
                     "Authorization": f"Bearer {self.api_key}",
                     "Content-Type": "application/json",
-                    "OpenAI-Beta": "realtime=v1"
+                    "OpenAI-Beta": "realtime=v1",
                 },
                 json={
                     "prompt": {
                         "id": MRS_MILLER_PROMPT_ID,
-                        "version": PROMPT_VERSION
+                        "version": PROMPT_VERSION,
                     },
                     "input_audio_transcription": {
-                        "model": "whisper-1"
-                    }
-                }
+                        "model": "whisper-1",
+                    },
+                },
             )
-            
+
             if response.status_code == 200:
                 data = response.json()
                 return data.get("client_secret", {}).get("value")
             else:
                 st.error(f"Session failed: {response.status_code}")
                 return None
-                
+
         except Exception as e:
             st.error(f"Error: {e}")
             return None
-    
+
     def realtime_component(self, ephemeral_token):
-        """Create the Realtime API component."""
-        
+        """Create the Realtime API HTML/JS component."""
         component_html = f"""
         <!DOCTYPE html>
         <html>
@@ -218,9 +253,9 @@ class VPERealtimeApp:
                 <h2 style="text-align: center; margin-bottom: 20px;">
                     🎤 Voice Conversation with Mrs. Miller
                 </h2>
-                
+
                 <div id="status" class="status">Ready to connect</div>
-                
+
                 <div class="controls">
                     <button id="connectBtn" onclick="connectRealtime()">
                         🎤 Start Conversation
@@ -229,18 +264,19 @@ class VPERealtimeApp:
                         ⏹️ End Conversation
                     </button>
                 </div>
-                
+
                 <div id="debugLog"></div>
-                
+
                 <div class="transcript" id="transcript">
                     <p style="text-align: center; color: #999;">
                         Conversation will appear here...
                     </p>
                 </div>
-                
+
+                <!-- Fallback copy box (only used if automatic send fails) -->
                 <div id="copyInstructions">
                     <h3>📋 Transcript Ready!</h3>
-                    <p><strong>Copy the text below and paste it in the box at the bottom of the page:</strong></p>
+                    <p><strong>If automatic feedback doesn't appear in Streamlit, copy the text below and paste it in the fallback box.</strong></p>
                     <div id="transcriptOutput"></div>
                     <button class="copy-btn" onclick="copyTranscript()">📋 Copy to Clipboard</button>
                 </div>
@@ -252,7 +288,7 @@ class VPERealtimeApp:
                 let audioStream = null;
                 const ephemeralToken = "{ephemeral_token}";
                 let conversationTranscript = [];
-                
+
                 function debugLog(msg) {{
                     console.log(msg);
                     const log = document.getElementById('debugLog');
@@ -262,33 +298,33 @@ class VPERealtimeApp:
                     log.appendChild(entry);
                     log.scrollTop = log.scrollHeight;
                 }}
-                
+
                 async function connectRealtime() {{
                     try {{
                         document.getElementById('connectBtn').disabled = true;
                         debugLog('🎤 Requesting microphone...');
-                        
-                        audioStream = await navigator.mediaDevices.getUserMedia({{ 
+
+                        audioStream = await navigator.mediaDevices.getUserMedia({{
                             audio: {{ echoCancellation: true, noiseSuppression: true }}
                         }});
-                        
+
                         debugLog('✅ Mic granted');
-                        
+
                         peerConnection = new RTCPeerConnection();
                         audioStream.getTracks().forEach(track => {{
                             peerConnection.addTrack(track, audioStream);
                         }});
-                        
+
                         peerConnection.ontrack = (event) => {{
                             const audio = new Audio();
                             audio.srcObject = event.streams[0];
                             audio.play();
                         }};
-                        
+
                         dataChannel = peerConnection.createDataChannel('oai-events');
                         dataChannel.onopen = () => debugLog('📡 Data channel open');
                         dataChannel.onmessage = (event) => handleEvent(event.data);
-                        
+
                         peerConnection.onconnectionstatechange = () => {{
                             if (peerConnection.connectionState === 'connected') {{
                                 document.getElementById('status').textContent = '🎤 Connected - Speak now';
@@ -297,10 +333,10 @@ class VPERealtimeApp:
                                 debugLog('🟢 CONNECTED');
                             }}
                         }};
-                        
+
                         const offer = await peerConnection.createOffer();
                         await peerConnection.setLocalDescription(offer);
-                        
+
                         const response = await fetch('https://api.openai.com/v1/realtime', {{
                             method: 'POST',
                             headers: {{
@@ -309,20 +345,20 @@ class VPERealtimeApp:
                             }},
                             body: offer.sdp
                         }});
-                        
+
                         const answerSdp = await response.text();
                         await peerConnection.setRemoteDescription({{ type: 'answer', sdp: answerSdp }});
-                        
+
                     }} catch (error) {{
                         debugLog('❌ Error: ' + error.message);
                         document.getElementById('connectBtn').disabled = false;
                     }}
                 }}
-                
+
                 function handleEvent(data) {{
                     try {{
                         const event = JSON.parse(data);
-                        
+
                         if (event.type === 'conversation.item.input_audio_transcription.completed') {{
                             const text = event.transcript;
                             if (text) {{
@@ -331,7 +367,7 @@ class VPERealtimeApp:
                                 conversationTranscript.push({{ role: 'user', content: text }});
                             }}
                         }}
-                        
+
                         if (event.type === 'response.audio_transcript.done') {{
                             const text = event.transcript;
                             if (text) {{
@@ -340,66 +376,72 @@ class VPERealtimeApp:
                                 conversationTranscript.push({{ role: 'assistant', content: text }});
                             }}
                         }}
-                        
+
                     }} catch (error) {{
                         console.error('Event error:', error);
                     }}
                 }}
-                
+
                 function addMessage(role, content) {{
                     const transcript = document.getElementById('transcript');
                     if (transcript.children.length === 1 && transcript.children[0].tagName === 'P') {{
                         transcript.innerHTML = '';
                     }}
-                    
+
                     const msg = document.createElement('div');
                     msg.className = `message ${{role}}`;
-                    
+
                     const speaker = document.createElement('div');
                     speaker.className = 'speaker';
                     speaker.textContent = role === 'user' ? '🎓 Student' : '👩‍⚕️ Mrs. Miller';
-                    
+
                     const text = document.createElement('div');
                     text.textContent = content;
-                    
+
                     msg.appendChild(speaker);
                     msg.appendChild(text);
                     transcript.appendChild(msg);
                     transcript.scrollTop = transcript.scrollHeight;
                 }}
-                
+
                 function endConversation() {{
                     debugLog('💾 Ending... ' + conversationTranscript.length + ' messages');
-                    
+
                     if (audioStream) audioStream.getTracks().forEach(t => t.stop());
                     if (dataChannel) dataChannel.close();
                     if (peerConnection) peerConnection.close();
-                    
+
                     document.getElementById('status').textContent = 'Conversation Ended';
                     document.getElementById('status').className = 'status';
                     document.getElementById('disconnectBtn').disabled = true;
-                    
-                    // Show copy instructions
+
                     const instructions = document.getElementById('copyInstructions');
-                    instructions.className = 'show';
-                    
-                    // Display transcript
                     const output = document.getElementById('transcriptOutput');
-                    output.textContent = JSON.stringify(conversationTranscript, null, 2);
-                    
-                    debugLog('✅ Transcript ready to copy!');
-                    debugLog('📊 Total messages: ' + conversationTranscript.length);
-                    
-                    // Scroll to instructions
-                    instructions.scrollIntoView({{ behavior: 'smooth' }});
+
+                    const jsonTranscript = JSON.stringify(conversationTranscript, null, 2);
+                    output.textContent = jsonTranscript;
+
+                    // Try to send transcript automatically to the parent (Streamlit) via URL params
+                    try {{
+                        const encoded = encodeURIComponent(JSON.stringify(conversationTranscript));
+                        const currentUrl = new URL(window.parent.location.href);
+                        currentUrl.searchParams.set("transcript", encoded);
+                        debugLog('🔁 Reloading parent with transcript param');
+                        window.parent.location.href = currentUrl.toString();
+                    }} catch (e) {{
+                        // Fallback to manual copy if automatic send fails
+                        debugLog('⚠️ Failed to send transcript to parent, fallback to manual copy: ' + e.message);
+                        instructions.className = 'show';
+                        instructions.scrollIntoView({{ behavior: 'smooth' }});
+                    }}
                 }}
-                
+
                 function copyTranscript() {{
                     const output = document.getElementById('transcriptOutput');
                     const text = output.textContent;
-                    
+
                     navigator.clipboard.writeText(text).then(() => {{
-                        alert('✅ Transcript copied! Scroll down and paste it in the box below.');
+                        alert('✅ Transcript copied! Use the fallback box in Streamlit.');
                     }}).catch(err => {{
                         alert('Please manually select and copy the text above.');
                     }});
@@ -408,23 +450,26 @@ class VPERealtimeApp:
         </body>
         </html>
         """
-        
+
         return component_html
-    
+
+    # ---------- Feedback generation ----------
+
     def generate_feedback(self, transcript_data):
-        """Generate feedback from transcript."""
-        transcript_text = "\n\n".join([
-            f"{'STUDENT' if msg['role'] == 'user' else 'MRS. MILLER'}: {msg['content']}"
-            for msg in transcript_data
-        ])
-        
-        st.markdown("### 📝 Conversation Transcript")
-        with st.expander("View Full Transcript"):
-            st.text_area("", transcript_text, height=200, key="transcript_display")
-        
+        """
+        Call the Assistant API to generate feedback.
+        Stores transcript + feedback in session_state and marks feedback_done.
+        """
+        transcript_text = "\n\n".join(
+            [
+                f"{'STUDENT' if msg['role'] == 'user' else 'MRS. MILLER'}: {msg['content']}"
+                for msg in transcript_data
+            ]
+        )
+
         try:
             feedback_thread = self.client.beta.threads.create()
-            
+
             self.client.beta.threads.messages.create(
                 thread_id=feedback_thread.id,
                 role="user",
@@ -434,121 +479,172 @@ Transcript:
 
 {transcript_text}
 
-Provide comprehensive feedback."""
+Provide comprehensive feedback.""",
             )
-            
+
             run = self.client.beta.threads.runs.create(
                 thread_id=feedback_thread.id,
-                assistant_id=FEEDBACK_ASSISTANTS["Mrs. Miller Feedback"]
+                assistant_id=FEEDBACK_ASSISTANTS["Mrs. Miller Feedback"],
             )
-            
-            with st.spinner("🧠 Generating comprehensive feedback..."):
-                while True:
-                    status = self.client.beta.threads.runs.retrieve(
-                        thread_id=feedback_thread.id,
-                        run_id=run.id
-                    )
-                    
-                    if status.status == "completed":
-                        break
-                    elif status.status in ["failed", "cancelled", "expired"]:
-                        st.error(f"Failed: {status.status}")
-                        return
-                    
-                    time.sleep(2)
-                
-                messages = self.client.beta.threads.messages.list(
+
+            while True:
+                status = self.client.beta.threads.runs.retrieve(
                     thread_id=feedback_thread.id,
-                    limit=1
+                    run_id=run.id,
                 )
-                
-                if messages.data:
-                    feedback = messages.data[0].content[0].text.value
-                    
-                    st.markdown("---")
-                    st.subheader("📋 Comprehensive Feedback")
-                    st.markdown(feedback)
-                    
-                    st.markdown("---")
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        st.download_button(
-                            "📥 Download Transcript",
-                            transcript_text,
-                            file_name="transcript.txt",
-                            use_container_width=True
-                        )
-                    with col2:
-                        st.download_button(
-                            "📥 Download Feedback",
-                            feedback,
-                            file_name="feedback.txt",
-                            use_container_width=True
-                        )
-        
+
+                if status.status == "completed":
+                    break
+                elif status.status in ["failed", "cancelled", "expired"]:
+                    st.error(f"Failed: {status.status}")
+                    return
+
+                time.sleep(2)
+
+            messages = self.client.beta.threads.messages.list(
+                thread_id=feedback_thread.id, limit=1
+            )
+
+            if messages.data:
+                feedback = messages.data[0].content[0].text.value
+
+                # Cache for reruns
+                st.session_state["last_transcript_text"] = transcript_text
+                st.session_state["last_feedback_text"] = feedback
+                st.session_state["feedback_done"] = True
+
         except Exception as e:
             st.error(f"Error: {e}")
-    
+
+    def render_cached_feedback(self):
+        """Render the transcript + feedback from session_state."""
+        transcript_text = st.session_state.get("last_transcript_text")
+        feedback = st.session_state.get("last_feedback_text")
+
+        if not transcript_text or not feedback:
+            st.warning("No feedback available yet.")
+            return
+
+        st.markdown("### 📝 Conversation Transcript")
+        with st.expander("View Full Transcript"):
+            st.text_area(
+                "",
+                transcript_text,
+                height=200,
+                key="transcript_display",
+            )
+
+        st.markdown("---")
+        st.subheader("📋 Comprehensive Feedback")
+        st.markdown(feedback)
+
+        st.markdown("---")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.download_button(
+                "📥 Download Transcript",
+                transcript_text,
+                file_name="transcript.txt",
+                use_container_width=True,
+            )
+        with col2:
+            st.download_button(
+                "📥 Download Feedback",
+                feedback,
+                file_name="feedback.txt",
+                use_container_width=True,
+            )
+
+    # ---------- Main app ----------
+
     def run(self):
         """Main application."""
         st.set_page_config(
             page_title="VPE - Mrs. Miller",
             page_icon="🎤",
-            layout="wide"
+            layout="wide",
         )
-        
+
+        # First, see if the frontend passed us a transcript via URL
+        self.check_for_incoming_transcript()
+
         st.title("🎤 Virtual Patient Encounter - Mrs. Miller")
         st.markdown("*High Value Care Case 04*")
-        
+
         with st.sidebar:
             st.header("Instructions")
-            st.info("""
-            1. Click "Start Conversation"
-            2. Allow microphone access  
-            3. Speak with Mrs. Miller
-            4. Click "End Conversation"
-            5. **Copy the transcript** shown in the yellow box
-            6. **Paste it below** and click "Generate Feedback"
-            """)
-            
+            st.info(
+                """
+                1. Click **"Start Conversation"**
+                2. Allow microphone access  
+                3. Speak with Mrs. Miller
+                4. Click **"End Conversation"**
+                5. The transcript is now sent **automatically** for feedback  
+                6. Scroll down to see **feedback** (no copy/paste needed)
+                """
+            )
+
             if st.button("🔄 Start New Session", use_container_width=True):
                 for key in list(st.session_state.keys()):
                     del st.session_state[key]
+                self.clear_query_params()
                 st.rerun()
-        
-        # Show conversation interface
-        if st.session_state.conversation_active:
+
+        # Voice conversation interface
+        if st.session_state.get("conversation_active", True):
             ephemeral_token = self.create_realtime_session()
-            
+
             if ephemeral_token:
                 st.success("✅ Voice session ready!")
                 html_code = self.realtime_component(ephemeral_token)
                 components.html(html_code, height=850, scrolling=True)
-        
-        # Feedback generation section
+
         st.markdown("---")
-        st.markdown("## 📋 Generate Feedback")
-        st.info("After ending the conversation above, copy the transcript and paste it here:")
-        
-        transcript_input = st.text_area(
-            "Paste Transcript JSON",
-            height=200,
-            placeholder='[{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}]',
-            key="transcript_input"
-        )
-        
-        if st.button("✨ Generate Feedback", type="primary", use_container_width=True):
-            if transcript_input:
-                try:
-                    transcript_data = json.loads(transcript_input)
-                    if len(transcript_data) > 0:
-                        self.generate_feedback(transcript_data)
-                    else:
-                        st.warning("Transcript is empty")
-                except json.JSONDecodeError as e:
-                    st.error(f"Invalid JSON format: {e}")
-            else:
-                st.warning("Please paste the transcript JSON first")
+
+        # If we have an automatic transcript, generate/show feedback
+        if "transcript_data" in st.session_state:
+            st.markdown("## 📋 Automatic Feedback from Conversation")
+
+            if not st.session_state.get("feedback_done"):
+                with st.spinner("🧠 Generating comprehensive feedback..."):
+                    self.generate_feedback(st.session_state["transcript_data"])
+
+            if st.session_state.get("feedback_done"):
+                self.render_cached_feedback()
+
+        else:
+            # Optional fallback manual path
+            st.markdown("## 📋 Fallback: Manual Transcript Input (optional)")
+            st.info(
+                "If automatic feedback doesn't appear, you can still paste the JSON transcript here."
+            )
+
+            transcript_input = st.text_area(
+                "Paste Transcript JSON",
+                height=200,
+                placeholder='[{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}]',
+                key="transcript_input",
+            )
+
+            if st.button(
+                "✨ Generate Feedback from Pasted Transcript",
+                type="primary",
+                use_container_width=True,
+            ):
+                if transcript_input:
+                    try:
+                        transcript_data = json.loads(transcript_input)
+                        if len(transcript_data) > 0:
+                            st.session_state["transcript_data"] = transcript_data
+                            st.session_state["feedback_done"] = False
+                            st.rerun()
+                        else:
+                            st.warning("Transcript is empty")
+                    except json.JSONDecodeError as e:
+                        st.error(f"Invalid JSON format: {e}")
+                else:
+                    st.warning("Please paste the transcript JSON first")
+
 
 if __name__ == "__main__":
     app = VPERealtimeApp()
