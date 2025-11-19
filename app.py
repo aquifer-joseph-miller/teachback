@@ -1,11 +1,12 @@
-# app.py - Automatic transcript → feedback
+# app.py - Automatic transcript → feedback (postMessage + streamlit-js-eval)
 
 import streamlit as st
 from openai import OpenAI
 import streamlit.components.v1 as components
 import time
 import json
-from urllib.parse import unquote
+
+from streamlit_js_eval import streamlit_js_eval  # pip install streamlit-js-eval
 
 # Configuration
 FEEDBACK_ASSISTANTS = {
@@ -21,56 +22,69 @@ class VPERealtimeApp:
         self.setup_openai()
         self.init_session_state()
 
+    # ---------- Setup ----------
+
     def setup_openai(self):
         """Initialize OpenAI client."""
         try:
             self.client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
             self.api_key = st.secrets["OPENAI_API_KEY"]
         except KeyError:
-            st.error("OpenAI API key not found.")
+            st.error("OpenAI API key not found in st.secrets['OPENAI_API_KEY'].")
             st.stop()
 
     def init_session_state(self):
-        """Initialize session state."""
+        """Initialize session state keys."""
         if "conversation_active" not in st.session_state:
             st.session_state.conversation_active = True
-
-    # ---------- URL transcript handling ----------
-
-    def check_for_incoming_transcript(self):
-        """
-        Look for a transcript passed in the URL query params by the frontend JS
-        and store it into session_state["transcript_data"].
-        """
-        params = st.experimental_get_query_params()
-        raw = params.get("transcript")
-
-        # Only parse if we haven't already
-        if raw and "transcript_data" not in st.session_state:
-            try:
-                # experimental_get_query_params returns lists
-                raw_value = raw[0] if isinstance(raw, list) else raw
-                decoded = unquote(raw_value)
-                transcript_data = json.loads(decoded)
-
-                if isinstance(transcript_data, list) and len(transcript_data) > 0:
-                    st.session_state["transcript_data"] = transcript_data
-                else:
-                    st.warning("Transcript from URL was empty or malformed.")
-            except Exception as e:
-                st.warning(f"Could not parse transcript from URL: {e}")
-
-    def clear_query_params(self):
-        """Remove all query params (used when starting a new session)."""
-        try:
-            st.experimental_set_query_params()  # clears all params
-        except Exception:
+        if "transcript_data" not in st.session_state:
+            # will be filled later via JS postMessage
             pass
+        if "feedback_done" not in st.session_state:
+            st.session_state.feedback_done = False
+
+    # ---------- JS <-> Python bridge ----------
+
+    def listen_for_transcript(self):
+        """
+        Listen for transcript messages from the iframe via window.parent.postMessage.
+        Uses streamlit-js-eval to attach a 'message' listener in the parent window.
+        """
+        # If we've already received a transcript, don't listen again
+        if "transcript_data" in st.session_state and st.session_state["transcript_data"]:
+            return
+
+        incoming = streamlit_js_eval(
+            js_expressions="""
+                // Runs in the parent window context.
+                // We return a Promise so it can resolve later when postMessage fires.
+                new Promise((resolve) => {
+                    function handler(event) {
+                        if (event.data && event.data.type === "vpe_transcript") {
+                            // Stop listening after first transcript
+                            window.removeEventListener("message", handler);
+                            resolve(event.data.payload);
+                        }
+                    }
+                    window.addEventListener("message", handler);
+                });
+            """,
+            key="vpe_transcript_listener",
+        )
+
+        # When JS resolves the promise, `incoming` will be a Python object
+        if incoming:
+            # Expecting a list of {role: "user"/"assistant", content: "..."}
+            try:
+                st.session_state["transcript_data"] = incoming
+                st.session_state["feedback_done"] = False
+            except Exception as e:
+                st.error(f"Error storing incoming transcript: {e}")
 
     # ---------- Realtime voice session ----------
 
     def create_realtime_session(self):
-        """Create ephemeral token with input transcription."""
+        """Create ephemeral token with input transcription enabled."""
         try:
             import requests
 
@@ -96,14 +110,14 @@ class VPERealtimeApp:
                 data = response.json()
                 return data.get("client_secret", {}).get("value")
             else:
-                st.error(f"Session failed: {response.status_code}")
+                st.error(f"Realtime session failed: {response.status_code} - {response.text}")
                 return None
 
         except Exception as e:
-            st.error(f"Error: {e}")
+            st.error(f"Error creating realtime session: {e}")
             return None
 
-    def realtime_component(self, ephemeral_token):
+    def realtime_component(self, ephemeral_token: str) -> str:
         """Create the Realtime API HTML/JS component."""
         component_html = f"""
         <!DOCTYPE html>
@@ -421,15 +435,15 @@ class VPERealtimeApp:
                     const jsonTranscript = JSON.stringify(conversationTranscript, null, 2);
                     output.textContent = jsonTranscript;
 
-                    // Try to send transcript automatically to the parent (Streamlit) via URL params
+                    // Send transcript automatically to parent via postMessage
                     try {{
-                        const encoded = encodeURIComponent(JSON.stringify(conversationTranscript));
-                        const currentUrl = new URL(window.parent.location.href);
-                        currentUrl.searchParams.set("transcript", encoded);
-                        debugLog('🔁 Reloading parent with transcript param');
-                        window.parent.location.href = currentUrl.toString();
+                        const payload = {{
+                            type: "vpe_transcript",
+                            payload: conversationTranscript
+                        }};
+                        debugLog('📨 Sending transcript to parent via postMessage');
+                        window.parent.postMessage(payload, "*");
                     }} catch (e) {{
-                        // Fallback to manual copy if automatic send fails
                         debugLog('⚠️ Failed to send transcript to parent, fallback to manual copy: ' + e.message);
                         instructions.className = 'show';
                         instructions.scrollIntoView({{ behavior: 'smooth' }});
@@ -462,7 +476,7 @@ class VPERealtimeApp:
         """
         transcript_text = "\n\n".join(
             [
-                f"{'STUDENT' if msg['role'] == 'user' else 'MRS. MILLER'}: {msg['content']}"
+                f"{'STUDENT' if msg.get('role') == 'user' else 'MRS. MILLER'}: {msg.get('content', '')}"
                 for msg in transcript_data
             ]
         )
@@ -496,7 +510,7 @@ Provide comprehensive feedback.""",
                 if status.status == "completed":
                     break
                 elif status.status in ["failed", "cancelled", "expired"]:
-                    st.error(f"Failed: {status.status}")
+                    st.error(f"Feedback generation failed: {status.status}")
                     return
 
                 time.sleep(2)
@@ -514,7 +528,7 @@ Provide comprehensive feedback.""",
                 st.session_state["feedback_done"] = True
 
         except Exception as e:
-            st.error(f"Error: {e}")
+            st.error(f"Error generating feedback: {e}")
 
     def render_cached_feedback(self):
         """Render the transcript + feedback from session_state."""
@@ -565,8 +579,8 @@ Provide comprehensive feedback.""",
             layout="wide",
         )
 
-        # First, see if the frontend passed us a transcript via URL
-        self.check_for_incoming_transcript()
+        # Attach JS listener for transcript messages from the iframe
+        self.listen_for_transcript()
 
         st.title("🎤 Virtual Patient Encounter - Mrs. Miller")
         st.markdown("*High Value Care Case 04*")
@@ -575,11 +589,11 @@ Provide comprehensive feedback.""",
             st.header("Instructions")
             st.info(
                 """
-                1. Click **"Start Conversation"**
+                1. Click **"Start Conversation"**  
                 2. Allow microphone access  
-                3. Speak with Mrs. Miller
-                4. Click **"End Conversation"**
-                5. The transcript is now sent **automatically** for feedback  
+                3. Speak with Mrs. Miller  
+                4. Click **"End Conversation"**  
+                5. The transcript is sent **automatically** for feedback  
                 6. Scroll down to see **feedback** (no copy/paste needed)
                 """
             )
@@ -587,7 +601,6 @@ Provide comprehensive feedback.""",
             if st.button("🔄 Start New Session", use_container_width=True):
                 for key in list(st.session_state.keys()):
                     del st.session_state[key]
-                self.clear_query_params()
                 st.rerun()
 
         # Voice conversation interface
@@ -598,11 +611,13 @@ Provide comprehensive feedback.""",
                 st.success("✅ Voice session ready!")
                 html_code = self.realtime_component(ephemeral_token)
                 components.html(html_code, height=850, scrolling=True)
+            else:
+                st.error("Could not create realtime session. Check your API key and network.")
 
         st.markdown("---")
 
-        # If we have an automatic transcript, generate/show feedback
-        if "transcript_data" in st.session_state:
+        # Automatic feedback path
+        if "transcript_data" in st.session_state and st.session_state["transcript_data"]:
             st.markdown("## 📋 Automatic Feedback from Conversation")
 
             if not st.session_state.get("feedback_done"):
@@ -613,10 +628,10 @@ Provide comprehensive feedback.""",
                 self.render_cached_feedback()
 
         else:
-            # Optional fallback manual path
+            # Optional manual fallback
             st.markdown("## 📋 Fallback: Manual Transcript Input (optional)")
             st.info(
-                "If automatic feedback doesn't appear, you can still paste the JSON transcript here."
+                "If automatic feedback doesn't appear, copy the JSON transcript from the yellow box above and paste it here."
             )
 
             transcript_input = st.text_area(
@@ -639,11 +654,11 @@ Provide comprehensive feedback.""",
                             st.session_state["feedback_done"] = False
                             st.rerun()
                         else:
-                            st.warning("Transcript is empty")
+                            st.warning("Transcript is empty.")
                     except json.JSONDecodeError as e:
                         st.error(f"Invalid JSON format: {e}")
                 else:
-                    st.warning("Please paste the transcript JSON first")
+                    st.warning("Please paste the transcript JSON first.")
 
 
 if __name__ == "__main__":
