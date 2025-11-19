@@ -1,4 +1,4 @@
-# app.py - Fixed with input transcription + auto feedback
+# app.py - Auto-feedback with session state trick
 
 import streamlit as st
 from openai import OpenAI
@@ -32,10 +32,12 @@ class VPERealtimeApp:
     
     def init_session_state(self):
         """Initialize session state."""
-        if "conversation_ended" not in st.session_state:
-            st.session_state.conversation_ended = False
-        if "transcript_json" not in st.session_state:
-            st.session_state.transcript_json = None
+        if "show_interface" not in st.session_state:
+            st.session_state.show_interface = True
+        if "transcript_to_process" not in st.session_state:
+            st.session_state.transcript_to_process = None
+        if "feedback_shown" not in st.session_state:
+            st.session_state.feedback_shown = False
     
     def create_realtime_session(self):
         """Create ephemeral token with input transcription enabled."""
@@ -54,9 +56,6 @@ class VPERealtimeApp:
                         "id": MRS_MILLER_PROMPT_ID,
                         "version": PROMPT_VERSION
                     },
-                    "turn_detection": {
-                        "type": "server_vad"
-                    },
                     "input_audio_transcription": {
                         "model": "whisper-1"
                     }
@@ -67,16 +66,15 @@ class VPERealtimeApp:
                 data = response.json()
                 return data.get("client_secret", {}).get("value")
             else:
-                st.error(f"Session creation failed: {response.status_code}")
-                st.error(f"Response: {response.text}")
+                st.error(f"Session failed: {response.status_code}")
                 return None
                 
         except Exception as e:
             st.error(f"Error: {e}")
             return None
     
-    def realtime_component(self, ephemeral_token):
-        """Create the Realtime API component with input transcription."""
+    def realtime_component(self, ephemeral_token, session_key):
+        """Create the Realtime API component."""
         
         component_html = f"""
         <!DOCTYPE html>
@@ -224,6 +222,7 @@ class VPERealtimeApp:
                 let dataChannel = null;
                 let audioStream = null;
                 const ephemeralToken = "{ephemeral_token}";
+                const sessionKey = "{session_key}";
                 let conversationTranscript = [];
                 
                 function debugLog(msg) {{
@@ -262,16 +261,6 @@ class VPERealtimeApp:
                         
                         dataChannel.onopen = () => {{
                             debugLog('📡 Data channel open');
-                            
-                            // Request input audio transcription
-                            dataChannel.send(JSON.stringify({{
-                                type: 'session.update',
-                                session: {{
-                                    input_audio_transcription: {{
-                                        model: 'whisper-1'
-                                    }}
-                                }}
-                            }}));
                         }};
                         
                         dataChannel.onmessage = (event) => handleEvent(event.data);
@@ -310,7 +299,7 @@ class VPERealtimeApp:
                     try {{
                         const event = JSON.parse(data);
                         
-                        // Student speech - input transcription
+                        // Student speech
                         if (event.type === 'conversation.item.input_audio_transcription.completed') {{
                             const text = event.transcript;
                             if (text) {{
@@ -320,7 +309,7 @@ class VPERealtimeApp:
                             }}
                         }}
                         
-                        // Mrs. Miller speech - response transcript
+                        // Mrs. Miller speech
                         if (event.type === 'response.audio_transcript.done') {{
                             const text = event.transcript;
                             if (text) {{
@@ -364,24 +353,22 @@ class VPERealtimeApp:
                     if (dataChannel) dataChannel.close();
                     if (peerConnection) peerConnection.close();
                     
-                    document.getElementById('status').textContent = 'Processing...';
+                    document.getElementById('status').textContent = 'Generating feedback...';
                     document.getElementById('disconnectBtn').disabled = true;
                     
-                    // Send to Streamlit via form submission
-                    const form = document.createElement('form');
-                    form.method = 'POST';
-                    form.action = window.location.href;
+                    // Save to session storage with unique key
+                    const storageKey = 'vpe_transcript_' + sessionKey;
+                    sessionStorage.setItem(storageKey, JSON.stringify(conversationTranscript));
                     
-                    const input = document.createElement('input');
-                    input.type = 'hidden';
-                    input.name = 'transcript_data';
-                    input.value = JSON.stringify(conversationTranscript);
+                    debugLog('✅ Saved to storage: ' + storageKey);
+                    debugLog('📋 User messages: ' + conversationTranscript.filter(m => m.role === 'user').length);
+                    debugLog('📋 Assistant messages: ' + conversationTranscript.filter(m => m.role === 'assistant').length);
                     
-                    form.appendChild(input);
-                    document.body.appendChild(form);
-                    
-                    debugLog('✅ Submitting transcript...');
-                    form.submit();
+                    // Reload page to trigger feedback
+                    debugLog('🔄 Reloading page...');
+                    setTimeout(() => {{
+                        window.location.reload();
+                    }}, 1000);
                 }}
             </script>
         </body>
@@ -389,6 +376,32 @@ class VPERealtimeApp:
         """
         
         return component_html
+    
+    def check_for_transcript(self, session_key):
+        """Check session storage for transcript."""
+        check_script = f"""
+        <script>
+            const storageKey = 'vpe_transcript_{session_key}';
+            const transcript = sessionStorage.getItem(storageKey);
+            if (transcript) {{
+                console.log('Found transcript in storage');
+                // Clear it
+                sessionStorage.removeItem(storageKey);
+                // Store in a hidden input that Streamlit can read
+                const input = document.createElement('input');
+                input.type = 'hidden';
+                input.id = 'transcript_data';
+                input.value = transcript;
+                document.body.appendChild(input);
+                
+                // Try to notify Streamlit
+                if (window.parent.Streamlit) {{
+                    window.parent.Streamlit.setComponentValue(transcript);
+                }}
+            }}
+        </script>
+        """
+        return components.html(check_script, height=0)
     
     def generate_feedback(self, transcript_data):
         """Generate feedback from transcript."""
@@ -402,7 +415,8 @@ class VPERealtimeApp:
         ])
         
         st.markdown("### 📝 Conversation Transcript")
-        st.text_area("Full Transcript", transcript_text, height=200)
+        with st.expander("View Full Transcript"):
+            st.text_area("", transcript_text, height=200)
         
         try:
             feedback_thread = self.client.beta.threads.create()
@@ -424,7 +438,7 @@ Provide comprehensive feedback."""
                 assistant_id=FEEDBACK_ASSISTANTS["Mrs. Miller Feedback"]
             )
             
-            with st.spinner("🧠 Generating feedback..."):
+            with st.spinner("🧠 Generating comprehensive feedback..."):
                 while True:
                     status = self.client.beta.threads.runs.retrieve(
                         thread_id=feedback_thread.id,
@@ -451,24 +465,27 @@ Provide comprehensive feedback."""
                     st.subheader("📋 Comprehensive Feedback")
                     st.markdown(feedback)
                     
+                    st.session_state.feedback_shown = True
+                    
+                    st.markdown("---")
                     col1, col2 = st.columns(2)
                     with col1:
                         st.download_button(
-                            "📥 Transcript",
+                            "📥 Download Transcript",
                             transcript_text,
                             file_name="transcript.txt",
                             use_container_width=True
                         )
                     with col2:
                         st.download_button(
-                            "📥 Feedback",
+                            "📥 Download Feedback",
                             feedback,
                             file_name="feedback.txt",
                             use_container_width=True
                         )
         
         except Exception as e:
-            st.error(f"Error: {e}")
+            st.error(f"Error generating feedback: {e}")
     
     def run(self):
         """Main application."""
@@ -481,6 +498,13 @@ Provide comprehensive feedback."""
         st.title("🎤 Virtual Patient Encounter - Mrs. Miller")
         st.markdown("*High Value Care Case 04*")
         
+        # Generate unique session key
+        if "session_key" not in st.session_state:
+            import random
+            st.session_state.session_key = f"session_{random.randint(1000, 9999)}"
+        
+        session_key = st.session_state.session_key
+        
         with st.sidebar:
             st.header("Instructions")
             st.info("""
@@ -488,7 +512,7 @@ Provide comprehensive feedback."""
             2. Allow microphone access  
             3. Speak with Mrs. Miller
             4. Click "End & Generate Feedback"
-            5. Feedback appears automatically
+            5. Page reloads with feedback
             """)
             
             if st.button("🔄 Start New Session", use_container_width=True):
@@ -496,36 +520,37 @@ Provide comprehensive feedback."""
                     del st.session_state[key]
                 st.rerun()
         
-        # Check for form submission with transcript
-        if hasattr(st, 'query_params'):
-            # This won't work perfectly but let's try query params approach
-            pass
+        # Check for saved transcript from previous page load
+        self.check_for_transcript(session_key)
         
-        # Show conversation interface if not ended
-        if not st.session_state.conversation_ended:
+        # Manual input as backup
+        st.markdown("---")
+        st.markdown("### Enter Transcript to Generate Feedback")
+        transcript_input = st.text_area(
+            "Paste transcript JSON here (from browser console if needed)",
+            height=150,
+            placeholder='[{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}]'
+        )
+        
+        if st.button("✨ Generate Feedback", type="primary", use_container_width=True):
+            if transcript_input:
+                try:
+                    transcript_data = json.loads(transcript_input)
+                    self.generate_feedback(transcript_data)
+                except json.JSONDecodeError:
+                    st.error("Invalid JSON format")
+            else:
+                st.warning("Please paste the transcript JSON")
+        
+        # Show conversation interface if feedback not yet shown
+        if not st.session_state.feedback_shown:
+            st.markdown("---")
             ephemeral_token = self.create_realtime_session()
             
             if ephemeral_token:
-                st.success("✅ Voice session ready! Input transcription enabled.")
-                html_code = self.realtime_component(ephemeral_token)
+                st.success("✅ Voice session ready!")
+                html_code = self.realtime_component(ephemeral_token, session_key)
                 components.html(html_code, height=700, scrolling=True)
-        
-        # Manual feedback trigger (backup method)
-        st.markdown("---")
-        st.markdown("### 🔧 Manual Feedback (if auto-feedback doesn't work)")
-        transcript_json = st.text_area(
-            "Paste transcript JSON from browser console",
-            height=100,
-            help="Open browser console (F12) and copy conversationTranscript"
-        )
-        
-        if st.button("Generate Feedback from JSON", type="secondary"):
-            if transcript_json:
-                try:
-                    transcript_data = json.loads(transcript_json)
-                    self.generate_feedback(transcript_data)
-                except json.JSONDecodeError:
-                    st.error("Invalid JSON")
 
 if __name__ == "__main__":
     app = VPERealtimeApp()
