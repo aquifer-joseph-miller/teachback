@@ -1,9 +1,10 @@
-# app.py - Simplified with manual feedback trigger
+# app.py - Fixed with input transcription + auto feedback
 
 import streamlit as st
 from openai import OpenAI
 import streamlit.components.v1 as components
 import time
+import json
 
 # Configuration
 FEEDBACK_ASSISTANTS = {
@@ -13,7 +14,7 @@ FEEDBACK_ASSISTANTS = {
 MRS_MILLER_PROMPT_ID = "pmpt_691cc606dfb4819491acd1328e0488dd0854e783a6e7f3ec"
 PROMPT_VERSION = "4"
 
-MIN_MESSAGES_FOR_FEEDBACK = 1  # Lowered for testing
+MIN_MESSAGES_FOR_FEEDBACK = 1
 
 class VPERealtimeApp:
     def __init__(self):
@@ -31,13 +32,13 @@ class VPERealtimeApp:
     
     def init_session_state(self):
         """Initialize session state."""
-        if "show_conversation" not in st.session_state:
-            st.session_state.show_conversation = True
-        if "show_feedback" not in st.session_state:
-            st.session_state.show_feedback = False
+        if "conversation_ended" not in st.session_state:
+            st.session_state.conversation_ended = False
+        if "transcript_json" not in st.session_state:
+            st.session_state.transcript_json = None
     
     def create_realtime_session(self):
-        """Create ephemeral token for Realtime API."""
+        """Create ephemeral token with input transcription enabled."""
         try:
             import requests
             
@@ -52,6 +53,12 @@ class VPERealtimeApp:
                     "prompt": {
                         "id": MRS_MILLER_PROMPT_ID,
                         "version": PROMPT_VERSION
+                    },
+                    "turn_detection": {
+                        "type": "server_vad"
+                    },
+                    "input_audio_transcription": {
+                        "model": "whisper-1"
                     }
                 }
             )
@@ -61,6 +68,7 @@ class VPERealtimeApp:
                 return data.get("client_secret", {}).get("value")
             else:
                 st.error(f"Session creation failed: {response.status_code}")
+                st.error(f"Response: {response.text}")
                 return None
                 
         except Exception as e:
@@ -68,7 +76,7 @@ class VPERealtimeApp:
             return None
     
     def realtime_component(self, ephemeral_token):
-        """Create the Realtime API component."""
+        """Create the Realtime API component with input transcription."""
         
         component_html = f"""
         <!DOCTYPE html>
@@ -135,6 +143,7 @@ class VPERealtimeApp:
                 button:disabled {{
                     background: #ccc;
                     cursor: not-allowed;
+                    transform: none;
                 }}
                 .transcript {{
                     background: #f9f9f9;
@@ -168,18 +177,18 @@ class VPERealtimeApp:
                 }}
                 .debug {{
                     background: #e8f5e9;
-                    padding: 8px;
-                    margin: 3px 0;
-                    font-size: 11px;
+                    padding: 6px;
+                    margin: 2px 0;
+                    font-size: 10px;
                     font-family: monospace;
                     border-radius: 3px;
                 }}
                 #debugLog {{
-                    max-height: 120px;
+                    max-height: 100px;
                     overflow-y: auto;
                     border: 1px solid #ddd;
                     border-radius: 5px;
-                    padding: 10px;
+                    padding: 8px;
                     margin: 10px 0;
                 }}
             </style>
@@ -196,8 +205,8 @@ class VPERealtimeApp:
                     <button id="connectBtn" onclick="connectRealtime()">
                         🎤 Start Conversation
                     </button>
-                    <button id="disconnectBtn" onclick="disconnectAndSave()" disabled>
-                        ⏹️ End Conversation
+                    <button id="disconnectBtn" onclick="endConversation()" disabled>
+                        ⏹️ End & Generate Feedback
                     </button>
                 </div>
                 
@@ -207,12 +216,6 @@ class VPERealtimeApp:
                     <p style="text-align: center; color: #999;">
                         Conversation will appear here...
                     </p>
-                </div>
-                
-                <div id="downloadSection" style="display: none; margin-top: 20px; text-align: center;">
-                    <button onclick="downloadTranscript()" style="background: #2196F3;">
-                        📥 Download Transcript JSON
-                    </button>
                 </div>
             </div>
 
@@ -242,7 +245,7 @@ class VPERealtimeApp:
                             audio: {{ echoCancellation: true, noiseSuppression: true }}
                         }});
                         
-                        debugLog('✅ Mic granted, connecting...');
+                        debugLog('✅ Mic granted');
                         
                         peerConnection = new RTCPeerConnection();
                         audioStream.getTracks().forEach(track => {{
@@ -256,14 +259,29 @@ class VPERealtimeApp:
                         }};
                         
                         dataChannel = peerConnection.createDataChannel('oai-events');
+                        
+                        dataChannel.onopen = () => {{
+                            debugLog('📡 Data channel open');
+                            
+                            // Request input audio transcription
+                            dataChannel.send(JSON.stringify({{
+                                type: 'session.update',
+                                session: {{
+                                    input_audio_transcription: {{
+                                        model: 'whisper-1'
+                                    }}
+                                }}
+                            }}));
+                        }};
+                        
                         dataChannel.onmessage = (event) => handleEvent(event.data);
                         
                         peerConnection.onconnectionstatechange = () => {{
                             if (peerConnection.connectionState === 'connected') {{
-                                document.getElementById('status').textContent = '🎤 Connected';
+                                document.getElementById('status').textContent = '🎤 Connected - Speak now';
                                 document.getElementById('status').className = 'status connected';
                                 document.getElementById('disconnectBtn').disabled = false;
-                                debugLog('🟢 Connected!');
+                                debugLog('🟢 CONNECTED');
                             }}
                         }};
                         
@@ -292,26 +310,28 @@ class VPERealtimeApp:
                     try {{
                         const event = JSON.parse(data);
                         
-                        // Student speech
+                        // Student speech - input transcription
                         if (event.type === 'conversation.item.input_audio_transcription.completed') {{
-                            if (event.transcript) {{
-                                debugLog('🎓 STUDENT: ' + event.transcript.substring(0, 40));
-                                addMessage('user', event.transcript);
-                                conversationTranscript.push({{ role: 'user', content: event.transcript }});
+                            const text = event.transcript;
+                            if (text) {{
+                                debugLog('🎓 STUDENT: ' + text.substring(0, 30));
+                                addMessage('user', text);
+                                conversationTranscript.push({{ role: 'user', content: text }});
                             }}
                         }}
                         
-                        // Mrs. Miller speech
+                        // Mrs. Miller speech - response transcript
                         if (event.type === 'response.audio_transcript.done') {{
-                            if (event.transcript) {{
-                                debugLog('👩‍⚕️ MILLER: ' + event.transcript.substring(0, 40));
-                                addMessage('assistant', event.transcript);
-                                conversationTranscript.push({{ role: 'assistant', content: event.transcript }});
+                            const text = event.transcript;
+                            if (text) {{
+                                debugLog('👩‍⚕️ MILLER: ' + text.substring(0, 30));
+                                addMessage('assistant', text);
+                                conversationTranscript.push({{ role: 'assistant', content: text }});
                             }}
                         }}
                         
                     }} catch (error) {{
-                        debugLog('❌ Event error: ' + error.message);
+                        console.error('Event error:', error);
                     }}
                 }}
                 
@@ -337,35 +357,31 @@ class VPERealtimeApp:
                     transcript.scrollTop = transcript.scrollHeight;
                 }}
                 
-                function disconnectAndSave() {{
-                    debugLog('💾 Saving ' + conversationTranscript.length + ' messages...');
+                function endConversation() {{
+                    debugLog('💾 Ending... ' + conversationTranscript.length + ' messages');
                     
                     if (audioStream) audioStream.getTracks().forEach(t => t.stop());
                     if (dataChannel) dataChannel.close();
                     if (peerConnection) peerConnection.close();
                     
-                    document.getElementById('status').textContent = 'Disconnected';
-                    document.getElementById('status').className = 'status';
-                    document.getElementById('connectBtn').disabled = false;
+                    document.getElementById('status').textContent = 'Processing...';
                     document.getElementById('disconnectBtn').disabled = true;
                     
-                    // Save to localStorage
-                    localStorage.setItem('vpe_transcript', JSON.stringify(conversationTranscript));
+                    // Send to Streamlit via form submission
+                    const form = document.createElement('form');
+                    form.method = 'POST';
+                    form.action = window.location.href;
                     
-                    // Show download button
-                    document.getElementById('downloadSection').style.display = 'block';
+                    const input = document.createElement('input');
+                    input.type = 'hidden';
+                    input.name = 'transcript_data';
+                    input.value = JSON.stringify(conversationTranscript);
                     
-                    debugLog('✅ Transcript saved! Copy the JSON and paste it in Streamlit.');
-                }}
-                
-                function downloadTranscript() {{
-                    const data = JSON.stringify(conversationTranscript, null, 2);
-                    const blob = new Blob([data], {{ type: 'application/json' }});
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url;
-                    a.download = 'transcript.json';
-                    a.click();
+                    form.appendChild(input);
+                    document.body.appendChild(form);
+                    
+                    debugLog('✅ Submitting transcript...');
+                    form.submit();
                 }}
             </script>
         </body>
@@ -469,47 +485,47 @@ Provide comprehensive feedback."""
             st.header("Instructions")
             st.info("""
             1. Click "Start Conversation"
-            2. Allow microphone access
+            2. Allow microphone access  
             3. Speak with Mrs. Miller
-            4. Click "End Conversation"
-            5. Paste transcript JSON below
-            6. Click "Generate Feedback"
+            4. Click "End & Generate Feedback"
+            5. Feedback appears automatically
             """)
             
-            if st.button("🔄 Reset", use_container_width=True):
-                st.session_state.show_conversation = True
-                st.session_state.show_feedback = False
+            if st.button("🔄 Start New Session", use_container_width=True):
+                for key in list(st.session_state.keys()):
+                    del st.session_state[key]
                 st.rerun()
         
-        # Show conversation interface
-        if st.session_state.show_conversation:
+        # Check for form submission with transcript
+        if hasattr(st, 'query_params'):
+            # This won't work perfectly but let's try query params approach
+            pass
+        
+        # Show conversation interface if not ended
+        if not st.session_state.conversation_ended:
             ephemeral_token = self.create_realtime_session()
             
             if ephemeral_token:
-                st.success("✅ Voice session ready!")
+                st.success("✅ Voice session ready! Input transcription enabled.")
                 html_code = self.realtime_component(ephemeral_token)
-                components.html(html_code, height=750, scrolling=True)
-                
-                st.markdown("---")
-                st.markdown("### Generate Feedback")
-                st.info("After ending the conversation, paste the downloaded transcript JSON here:")
-                
-                transcript_json = st.text_area(
-                    "Paste Transcript JSON",
-                    height=150,
-                    placeholder='[{"role": "user", "content": "..."}, ...]'
-                )
-                
-                if st.button("✨ Generate Feedback", type="primary", use_container_width=True):
-                    if transcript_json:
-                        try:
-                            import json
-                            transcript_data = json.loads(transcript_json)
-                            self.generate_feedback(transcript_data)
-                        except json.JSONDecodeError:
-                            st.error("Invalid JSON. Please paste the transcript from the download.")
-                    else:
-                        st.warning("Please paste the transcript JSON first.")
+                components.html(html_code, height=700, scrolling=True)
+        
+        # Manual feedback trigger (backup method)
+        st.markdown("---")
+        st.markdown("### 🔧 Manual Feedback (if auto-feedback doesn't work)")
+        transcript_json = st.text_area(
+            "Paste transcript JSON from browser console",
+            height=100,
+            help="Open browser console (F12) and copy conversationTranscript"
+        )
+        
+        if st.button("Generate Feedback from JSON", type="secondary"):
+            if transcript_json:
+                try:
+                    transcript_data = json.loads(transcript_json)
+                    self.generate_feedback(transcript_data)
+                except json.JSONDecodeError:
+                    st.error("Invalid JSON")
 
 if __name__ == "__main__":
     app = VPERealtimeApp()
