@@ -1,4 +1,4 @@
-# app.py - Realtime API with correct prompt version
+# app.py - Fixed transcript capture and auto-feedback
 
 import streamlit as st
 from openai import OpenAI
@@ -12,7 +12,7 @@ FEEDBACK_ASSISTANTS = {
 
 # Your Mrs. Miller prompt ID from the Realtime API
 MRS_MILLER_PROMPT_ID = "pmpt_691cc606dfb4819491acd1328e0488dd0854e783a6e7f3ec"
-PROMPT_VERSION = "4"  # Updated to version 4
+PROMPT_VERSION = "4"
 
 MIN_MESSAGES_FOR_FEEDBACK = 3
 
@@ -36,6 +36,10 @@ class VPERealtimeApp:
             st.session_state.transcript = []
         if "session_active" not in st.session_state:
             st.session_state.session_active = False
+        if "conversation_ended" not in st.session_state:
+            st.session_state.conversation_ended = False
+        if "generate_feedback_now" not in st.session_state:
+            st.session_state.generate_feedback_now = False
     
     def create_realtime_session(self):
         """Create ephemeral token for Realtime API."""
@@ -337,34 +341,26 @@ class VPERealtimeApp:
                 function handleRealtimeEvent(data) {{
                     try {{
                         const event = JSON.parse(data);
-                        console.log('Realtime event:', event.type);
+                        console.log('Realtime event:', event.type, event);
                         
-                        // Handle conversation item creation (messages)
-                        if (event.type === 'conversation.item.created') {{
-                            const item = event.item;
-                            
-                            if (item.type === 'message' && item.role && item.content) {{
-                                const role = item.role;
-                                const content = Array.isArray(item.content) 
-                                    ? item.content.map(c => c.text || c.transcript || '').join(' ')
-                                    : item.content;
+                        // Handle input audio transcription (USER SPEECH)
+                        if (event.type === 'conversation.item.input_audio_transcription.completed') {{
+                            if (event.transcript) {{
+                                console.log('User said:', event.transcript);
+                                addToTranscript('user', event.transcript);
                                 
-                                if (content) {{
-                                    addToTranscript(role, content);
-                                    
-                                    // Send to Streamlit
-                                    window.parent.postMessage({{
-                                        type: 'transcript_update',
-                                        role: role,
-                                        content: content
-                                    }}, '*');
-                                }}
+                                window.parent.postMessage({{
+                                    type: 'transcript_update',
+                                    role: 'user',
+                                    content: event.transcript
+                                }}, '*');
                             }}
                         }}
                         
-                        // Handle response audio transcript
+                        // Handle response audio transcript (ASSISTANT SPEECH)
                         if (event.type === 'response.audio_transcript.done') {{
                             if (event.transcript) {{
+                                console.log('Assistant said:', event.transcript);
                                 addToTranscript('assistant', event.transcript);
                                 
                                 window.parent.postMessage({{
@@ -375,16 +371,34 @@ class VPERealtimeApp:
                             }}
                         }}
                         
-                        // Handle input audio transcript
-                        if (event.type === 'conversation.item.input_audio_transcription.completed') {{
-                            if (event.transcript) {{
-                                addToTranscript('user', event.transcript);
+                        // Fallback: Handle conversation item creation
+                        if (event.type === 'conversation.item.created') {{
+                            const item = event.item;
+                            console.log('Conversation item:', item);
+                            
+                            if (item.type === 'message' && item.role) {{
+                                let content = '';
                                 
-                                window.parent.postMessage({{
-                                    type: 'transcript_update',
-                                    role: 'user',
-                                    content: event.transcript
-                                }}, '*');
+                                // Extract content from various formats
+                                if (Array.isArray(item.content)) {{
+                                    content = item.content
+                                        .map(c => c.transcript || c.text || '')
+                                        .filter(t => t.length > 0)
+                                        .join(' ');
+                                }} else if (typeof item.content === 'string') {{
+                                    content = item.content;
+                                }}
+                                
+                                if (content && content.length > 0) {{
+                                    console.log('Message content:', item.role, content);
+                                    addToTranscript(item.role, content);
+                                    
+                                    window.parent.postMessage({{
+                                        type: 'transcript_update',
+                                        role: item.role,
+                                        content: content
+                                    }}, '*');
+                                }}
                             }}
                         }}
                         
@@ -436,12 +450,12 @@ class VPERealtimeApp:
                         peerConnection = null;
                     }}
                     
-                    document.getElementById('status').textContent = 'Disconnected';
+                    document.getElementById('status').textContent = 'Disconnected - Generating feedback...';
                     document.getElementById('status').className = 'status disconnected';
                     document.getElementById('connectBtn').disabled = false;
                     document.getElementById('disconnectBtn').disabled = true;
                     
-                    // Notify Streamlit
+                    // Notify Streamlit to generate feedback
                     window.parent.postMessage({{
                         type: 'conversation_ended'
                     }}, '*');
@@ -524,14 +538,14 @@ Please provide comprehensive feedback on the student's performance."""
                         st.download_button(
                             "📥 Download Transcript",
                             transcript,
-                            file_name="transcript.txt",
+                            file_name="mrs_miller_transcript.txt",
                             mime="text/plain"
                         )
                     with col2:
                         st.download_button(
                             "📥 Download Feedback",
                             feedback_text,
-                            file_name="feedback.txt",
+                            file_name="mrs_miller_feedback.txt",
                             mime="text/plain"
                         )
         
@@ -560,13 +574,15 @@ Please provide comprehensive feedback on the student's performance."""
             2. Allow microphone access
             3. Speak naturally with Mrs. Miller
             4. Click "End Conversation" when done
-            5. Generate feedback
+            5. Feedback will generate automatically
             """)
             
             st.markdown("---")
             
             if st.button("🔄 New Session", use_container_width=True):
                 st.session_state.transcript = []
+                st.session_state.conversation_ended = False
+                st.session_state.generate_feedback_now = False
                 st.rerun()
             
             st.markdown("---")
@@ -582,27 +598,47 @@ Please provide comprehensive feedback on the student's performance."""
             st.caption("🎯 Using OpenAI Realtime API")
         
         # Create session and show component
-        with st.spinner("🔄 Initializing voice session..."):
-            ephemeral_token = self.create_realtime_session()
-        
-        if ephemeral_token:
-            st.success("✅ Voice session ready!")
+        if not st.session_state.conversation_ended:
+            with st.spinner("🔄 Initializing voice session..."):
+                ephemeral_token = self.create_realtime_session()
             
-            # Display the realtime component
-            html_code = self.realtime_component(ephemeral_token)
-            components.html(html_code, height=700, scrolling=True)
-        else:
-            st.error("Failed to initialize voice session. Please refresh the page.")
-            st.stop()
+            if ephemeral_token:
+                st.success("✅ Voice session ready!")
+                
+                # Display the realtime component
+                html_code = self.realtime_component(ephemeral_token)
+                components.html(html_code, height=700, scrolling=True)
+                
+                # JavaScript listener for messages from iframe
+                st.markdown("""
+                <script>
+                window.addEventListener('message', function(event) {
+                    if (event.data.type === 'transcript_update') {
+                        // This gets handled by Streamlit's component system
+                        console.log('Transcript update:', event.data);
+                    } else if (event.data.type === 'conversation_ended') {
+                        // Trigger page reload to show feedback
+                        window.location.reload();
+                    }
+                });
+                </script>
+                """, unsafe_allow_html=True)
+            else:
+                st.error("Failed to initialize voice session. Please refresh the page.")
+                st.stop()
         
-        # Feedback section
-        if len(st.session_state.transcript) >= MIN_MESSAGES_FOR_FEEDBACK:
-            st.markdown("---")
-            st.subheader("🧠 Ready for Feedback?")
-            
-            if st.button("✨ Generate Comprehensive Feedback", type="primary", use_container_width=True):
+        # Auto-generate feedback when conversation ends
+        if st.session_state.conversation_ended and not st.session_state.generate_feedback_now:
+            st.session_state.generate_feedback_now = True
+            st.rerun()
+        
+        if st.session_state.generate_feedback_now:
+            if len(st.session_state.transcript) >= MIN_MESSAGES_FOR_FEEDBACK:
                 self.generate_feedback()
+            else:
+                st.info(f"Conversation too short for feedback. Need at least {MIN_MESSAGES_FOR_FEEDBACK} exchanges.")
 
 if __name__ == "__main__":
     app = VPERealtimeApp()
     app.run()
+    
