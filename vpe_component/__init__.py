@@ -1,25 +1,15 @@
 import os
 import streamlit.components.v1 as components
 
-# Directory where index.html lives
-_COMPONENT_DIR = os.path.dirname(__file__)
+# Path to the frontend directory
+_component_dir = os.path.join(os.path.dirname(__file__), "frontend")
 
-# Declare the component once, pointing at the folder that contains index.html
+# Declare the component
 _vpe_component = components.declare_component(
     "vpe_component",
-    path=_COMPONENT_DIR,
+    path=_component_dir,
 )
 
-def vpe_component(ephemeralToken: str, key: str | None = None):
-    """
-    Call the custom VPE component.
-
-    Args:
-        ephemeralToken: The Realtime API ephemeral token from app.py
-        key: Optional Streamlit key
-
-    Returns:
-        None until JS calls Streamlit.setComponentValue(...),
-        then the transcript (list of {role, content} dicts).
-    """
+def vpe_component(ephemeralToken: str, key=None):
+    """Wrapper exposed to Streamlit."""
     return _vpe_component(ephemeralToken=ephemeralToken, key=key)
