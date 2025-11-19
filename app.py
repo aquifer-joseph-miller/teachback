@@ -1,10 +1,9 @@
-# app.py - Fixed transcript capture and feedback display
+# app.py - Fixed (removed declare_component error)
 
 import streamlit as st
 from openai import OpenAI
 import streamlit.components.v1 as components
 import time
-import json
 
 # Configuration
 FEEDBACK_ASSISTANTS = {
@@ -15,7 +14,7 @@ FEEDBACK_ASSISTANTS = {
 MRS_MILLER_PROMPT_ID = "pmpt_691cc606dfb4819491acd1328e0488dd0854e783a6e7f3ec"
 PROMPT_VERSION = "4"
 
-MIN_MESSAGES_FOR_FEEDBACK = 2  # Lowered threshold for testing
+MIN_MESSAGES_FOR_FEEDBACK = 2
 
 class VPERealtimeApp:
     def __init__(self):
@@ -73,12 +72,6 @@ class VPERealtimeApp:
     
     def realtime_component(self, ephemeral_token):
         """Create the Realtime API WebSocket component."""
-        
-        # Use Streamlit's component value to receive messages
-        component_value = components.declare_component(
-            "realtime_audio",
-            path=None,
-        )
         
         component_html = f"""
         <!DOCTYPE html>
@@ -214,10 +207,10 @@ class VPERealtimeApp:
                 .debug {{
                     background: #e8f5e9;
                     color: #2e7d32;
-                    padding: 10px;
+                    padding: 8px;
                     border-radius: 5px;
-                    margin: 5px 0;
-                    font-size: 12px;
+                    margin: 3px 0;
+                    font-size: 11px;
                     font-family: monospace;
                 }}
             </style>
@@ -241,7 +234,7 @@ class VPERealtimeApp:
                 
                 <div id="error" style="display: none;" class="error"></div>
                 
-                <div id="debugLog" style="max-height: 150px; overflow-y: auto; margin: 10px 0;"></div>
+                <div id="debugLog" style="max-height: 150px; overflow-y: auto; margin: 10px 0; border: 1px solid #ddd; border-radius: 5px; padding: 10px;"></div>
                 
                 <div class="transcript" id="transcript">
                     <p style="text-align: center; color: #999;">
@@ -275,7 +268,6 @@ class VPERealtimeApp:
                         
                         debugLog('Requesting microphone access...');
                         
-                        // Get microphone access
                         audioStream = await navigator.mediaDevices.getUserMedia({{ 
                             audio: {{
                                 echoCancellation: true,
@@ -287,16 +279,13 @@ class VPERealtimeApp:
                         debugLog('Microphone access granted');
                         document.getElementById('status').textContent = 'Connecting to Mrs. Miller...';
                         
-                        // Create peer connection
                         peerConnection = new RTCPeerConnection();
                         
-                        // Add audio tracks
                         audioStream.getTracks().forEach(track => {{
                             peerConnection.addTrack(track, audioStream);
                             debugLog('Added audio track');
                         }});
                         
-                        // Handle incoming audio
                         peerConnection.ontrack = (event) => {{
                             debugLog('Received audio track');
                             const remoteAudio = new Audio();
@@ -304,7 +293,6 @@ class VPERealtimeApp:
                             remoteAudio.play();
                         }};
                         
-                        // Set up data channel for events
                         dataChannel = peerConnection.createDataChannel('oai-events');
                         
                         dataChannel.onopen = () => {{
@@ -315,7 +303,6 @@ class VPERealtimeApp:
                             handleRealtimeEvent(event.data);
                         }};
                         
-                        // Connection state handling
                         peerConnection.onconnectionstatechange = () => {{
                             debugLog('Connection state: ' + peerConnection.connectionState);
                             
@@ -330,13 +317,11 @@ class VPERealtimeApp:
                             }}
                         }};
                         
-                        // Create offer
                         const offer = await peerConnection.createOffer();
                         await peerConnection.setLocalDescription(offer);
                         
                         debugLog('Sending offer to OpenAI...');
                         
-                        // Send offer to OpenAI Realtime API
                         const response = await fetch('https://api.openai.com/v1/realtime', {{
                             method: 'POST',
                             headers: {{
@@ -372,19 +357,16 @@ class VPERealtimeApp:
                 function handleRealtimeEvent(data) {{
                     try {{
                         const event = JSON.parse(data);
-                        debugLog('Event: ' + event.type);
                         
-                        // Log all events to see what we're getting
+                        // Log event type (but not full data to keep debug clean)
                         if (event.type.includes('transcript') || event.type.includes('audio')) {{
-                            debugLog('AUDIO EVENT: ' + JSON.stringify(event).substring(0, 100));
+                            debugLog('📝 Event: ' + event.type);
                         }}
                         
-                        // Capture USER speech (input audio transcription)
-                        if (event.type === 'conversation.item.input_audio_transcription.completed' ||
-                            event.type === 'input_audio_transcription.completed') {{
-                            
+                        // USER speech - input audio transcription
+                        if (event.type === 'conversation.item.input_audio_transcription.completed') {{
                             if (event.transcript) {{
-                                debugLog('USER SAID: ' + event.transcript);
+                                debugLog('🎓 STUDENT: ' + event.transcript.substring(0, 50) + '...');
                                 addToTranscript('user', event.transcript);
                                 conversationTranscript.push({{
                                     role: 'user',
@@ -393,48 +375,33 @@ class VPERealtimeApp:
                             }}
                         }}
                         
-                        // Capture ASSISTANT speech (response audio transcript)
-                        if (event.type === 'response.audio_transcript.done' ||
-                            event.type === 'response.done' && event.response?.output) {{
-                            
-                            let transcript = event.transcript;
-                            
-                            if (!transcript && event.response?.output) {{
-                                // Try to extract from response output
-                                const outputs = Array.isArray(event.response.output) ? 
-                                    event.response.output : [event.response.output];
-                                
-                                transcript = outputs
-                                    .map(o => o.content?.map(c => c.transcript || c.text || '').join(' '))
-                                    .filter(t => t)
-                                    .join(' ');
-                            }}
-                            
-                            if (transcript) {{
-                                debugLog('ASSISTANT SAID: ' + transcript);
-                                addToTranscript('assistant', transcript);
+                        // ASSISTANT speech - response audio transcript
+                        if (event.type === 'response.audio_transcript.done') {{
+                            if (event.transcript) {{
+                                debugLog('👩‍⚕️ MRS. MILLER: ' + event.transcript.substring(0, 50) + '...');
+                                addToTranscript('assistant', event.transcript);
                                 conversationTranscript.push({{
                                     role: 'assistant',
-                                    content: transcript
+                                    content: event.transcript
                                 }});
                             }}
                         }}
                         
-                        // Alternative: capture from response.audio_transcript.delta (streaming)
-                        if (event.type === 'response.audio_transcript.delta') {{
-                            debugLog('STREAMING TRANSCRIPT: ' + event.delta);
+                        // Also try response.done with output
+                        if (event.type === 'response.done' && event.response) {{
+                            debugLog('Response done event received');
+                            // Already captured via audio_transcript.done
                         }}
                         
                     }} catch (error) {{
                         console.error('Error handling event:', error);
-                        debugLog('ERROR in event handler: ' + error.message);
+                        debugLog('❌ ERROR: ' + error.message);
                     }}
                 }}
                 
                 function addToTranscript(role, content) {{
                     const transcript = document.getElementById('transcript');
                     
-                    // Clear initial message
                     if (transcript.children.length === 1 && 
                         transcript.children[0].tagName === 'P') {{
                         transcript.innerHTML = '';
@@ -454,12 +421,11 @@ class VPERealtimeApp:
                     messageDiv.appendChild(contentDiv);
                     transcript.appendChild(messageDiv);
                     
-                    // Scroll to bottom
                     transcript.scrollTop = transcript.scrollHeight;
                 }}
                 
                 function disconnectRealtime() {{
-                    debugLog('Disconnecting and sending transcript to Streamlit...');
+                    debugLog('🔌 Disconnecting... Captured ' + conversationTranscript.length + ' messages');
                     
                     if (audioStream) {{
                         audioStream.getTracks().forEach(track => track.stop());
@@ -476,25 +442,19 @@ class VPERealtimeApp:
                         peerConnection = null;
                     }}
                     
-                    document.getElementById('status').textContent = 'Disconnected';
+                    document.getElementById('status').textContent = 'Disconnected - Processing...';
                     document.getElementById('status').className = 'status disconnected';
                     document.getElementById('connectBtn').disabled = false;
                     document.getElementById('disconnectBtn').disabled = true;
                     
-                    // Send full transcript to Streamlit
-                    debugLog('Sending ' + conversationTranscript.length + ' messages to Streamlit');
+                    // Store transcript in localStorage to pass to Streamlit
+                    localStorage.setItem('conversationTranscript', JSON.stringify(conversationTranscript));
                     
-                    window.parent.postMessage({{
-                        type: 'full_transcript',
-                        transcript: conversationTranscript
-                    }}, '*');
-                    
-                    // Small delay then trigger feedback
+                    // Trigger Streamlit reload
+                    debugLog('✅ Reloading page to show feedback...');
                     setTimeout(() => {{
-                        window.parent.postMessage({{
-                            type: 'conversation_ended'
-                        }}, '*');
-                    }}, 500);
+                        window.location.reload();
+                    }}, 1000);
                 }}
                 
                 function showError(message) {{
@@ -502,6 +462,22 @@ class VPERealtimeApp:
                     errorDiv.textContent = message;
                     errorDiv.style.display = 'block';
                 }}
+                
+                // On page load, check if we have a transcript to process
+                window.addEventListener('load', () => {{
+                    const savedTranscript = localStorage.getItem('conversationTranscript');
+                    if (savedTranscript) {{
+                        debugLog('📋 Found saved transcript, will trigger feedback');
+                        // Clear it so we don't process again
+                        localStorage.removeItem('conversationTranscript');
+                        
+                        // Send to parent Streamlit
+                        window.parent.postMessage({{
+                            type: 'conversation_ended',
+                            transcript: JSON.parse(savedTranscript)
+                        }}, '*');
+                    }}
+                }});
             </script>
         </body>
         </html>
@@ -513,16 +489,17 @@ class VPERealtimeApp:
         """Generate feedback from transcript."""
         if len(st.session_state.transcript) < MIN_MESSAGES_FOR_FEEDBACK:
             st.warning(f"Conversation too short. Need at least {MIN_MESSAGES_FOR_FEEDBACK} exchanges.")
+            st.info("Click 'Start Over' to begin a new conversation.")
             return
         
-        # Build transcript
         transcript = "\n\n".join([
             f"{'STUDENT' if msg['role'] == 'user' else 'MRS. MILLER'}: {msg['content']}"
             for msg in st.session_state.transcript
         ])
         
         st.markdown("### 📝 Conversation Transcript")
-        st.text_area("Full Transcript", transcript, height=200)
+        with st.expander("View Full Transcript", expanded=False):
+            st.text_area("Transcript", transcript, height=200)
         
         try:
             feedback_thread = self.client.beta.threads.create()
@@ -547,7 +524,7 @@ Please provide comprehensive feedback on the student's performance."""
             )
             
             with st.spinner("🧠 Generating comprehensive feedback..."):
-                max_wait = 180  # 3 minutes
+                max_wait = 180
                 elapsed = 0
                 
                 while elapsed < max_wait:
@@ -605,8 +582,6 @@ Please provide comprehensive feedback on the student's performance."""
         
         except Exception as e:
             st.error(f"Failed to generate feedback: {e}")
-            import traceback
-            st.error(traceback.format_exc())
     
     def run(self):
         """Main application."""
@@ -654,6 +629,22 @@ Please provide comprehensive feedback on the student's performance."""
             
             st.caption("🎯 Using OpenAI Realtime API")
         
+        # Check for transcript in localStorage (passed from iframe)
+        check_storage_script = """
+        <script>
+        const transcript = localStorage.getItem('conversationTranscript');
+        if (transcript) {
+            const data = JSON.parse(transcript);
+            window.parent.Streamlit.setComponentValue({
+                type: 'transcript',
+                data: data
+            });
+            localStorage.removeItem('conversationTranscript');
+        }
+        </script>
+        """
+        components.html(check_storage_script, height=0)
+        
         # Show conversation interface if not ended
         if not st.session_state.conversation_ended:
             with st.spinner("🔄 Initializing voice session..."):
@@ -662,7 +653,6 @@ Please provide comprehensive feedback on the student's performance."""
             if ephemeral_token:
                 st.success("✅ Voice session ready!")
                 
-                # Display the realtime component
                 html_code = self.realtime_component(ephemeral_token)
                 components.html(html_code, height=800, scrolling=True)
             else:
