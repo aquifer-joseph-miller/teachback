@@ -1,1 +1,41 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8" />
+    <script src="https://cdn.jsdelivr.net/npm/streamlit-component-lib/dist/index.js"></script>
+</head>
 
+<body>
+<script>
+    let conversationTranscript = [];
+    let ephemeralToken = null;
+
+    // Receive ephemeral token from Python on component mount
+    Streamlit.events.addEventListener("componentDidMount", (event) => {
+        ephemeralToken = event.detail.args["ephemeralToken"];
+        // TODO: create realtime session here using your existing JS
+    });
+
+    Streamlit.events.addEventListener("render", (event) => {
+        // Not needed yet
+    });
+
+    // Replace your endConversation() with this:
+    function endConversation() {
+        // Stop audio, close peerConnection, etc...
+        // Then send transcript back to Streamlit:
+        Streamlit.setComponentValue(conversationTranscript);
+    }
+
+    // TODO: paste all your existing JS logic here:
+    //   - WebRTC setup
+    //   - handleEvent()
+    //   - addMessage()
+    //   - endConversation()
+    //   - UI 
+</script>
+
+<h2>Realtime Component Placeholder</h2>
+<p>This will later become your conversation UI.</p>
+</body>
+</html>
