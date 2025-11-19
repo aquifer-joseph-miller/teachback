@@ -1,1 +1,591 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>VPE Realtime Component</title>
 
+  <!-- Streamlit Component Library -->
+  <script src="https://unpkg.com/@streamlit/component-lib@latest/dist/index.js"></script>
+
+  <style>
+    :root {
+      --bg: #f5f7fb;
+      --card: #ffffff;
+      --accent: #2563eb;
+      --accent-soft: #dbeafe;
+      --danger: #dc2626;
+      --text-main: #111827;
+      --text-muted: #6b7280;
+      --border: #e5e7eb;
+      --shadow-soft: 0 10px 25px rgba(15, 23, 42, 0.08);
+      --radius-lg: 18px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      padding: 16px;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text-main);
+    }
+
+    .shell {
+      max-width: 960px;
+      margin: 0 auto;
+    }
+
+    .card {
+      background: var(--card);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-soft);
+      padding: 20px 24px 18px;
+      border: 1px solid #e5e7eb;
+    }
+
+    .header-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+
+    .title {
+      font-size: 18px;
+      font-weight: 600;
+      letter-spacing: 0.01em;
+    }
+
+    .subtitle {
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+
+    .status-pill {
+      font-size: 12px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--text-muted);
+      background: #f9fafb;
+    }
+
+    .status-pill-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      background: #9ca3af;
+    }
+
+    .status-pill.connected {
+      border-color: #16a34a33;
+      background: #ecfdf3;
+      color: #166534;
+    }
+
+    .status-pill.connected .status-pill-dot {
+      background: #16a34a;
+      animation: pulse 1.4s infinite ease-out;
+    }
+
+    @keyframes pulse {
+      0% { transform: scale(1); opacity: 1; }
+      50% { transform: scale(1.6); opacity: 0.4; }
+      100% { transform: scale(1); opacity: 1; }
+    }
+
+    .controls-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      margin: 12px 0 14px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .control-buttons {
+      display: flex;
+      gap: 10px;
+    }
+
+    button {
+      font-family: inherit;
+      font-size: 14px;
+      border-radius: 999px;
+      border: none;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 7px 16px;
+      transition: background 0.15s ease, transform 0.1s ease, box-shadow 0.1s ease;
+    }
+
+    button span.icon {
+      font-size: 15px;
+    }
+
+    #startBtn {
+      background: var(--accent);
+      color: white;
+      box-shadow: 0 8px 20px rgba(37, 99, 235, 0.35);
+    }
+
+    #startBtn:hover:not(:disabled) {
+      background: #1d4ed8;
+      transform: translateY(-1px);
+      box-shadow: 0 10px 22px rgba(37, 99, 235, 0.45);
+    }
+
+    #stopBtn {
+      background: #fee2e2;
+      color: #b91c1c;
+    }
+
+    #stopBtn:hover:not(:disabled) {
+      background: #fecaca;
+      transform: translateY(-1px);
+    }
+
+    button:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+      box-shadow: none;
+      transform: none;
+    }
+
+    .hint {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .body-row {
+      display: grid;
+      grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+      gap: 16px;
+      margin-top: 4px;
+    }
+
+    @media (max-width: 960px) {
+      .body-row {
+        grid-template-columns: minmax(0, 1fr);
+      }
+    }
+
+    .transcript-panel {
+      border-radius: 14px;
+      border: 1px solid var(--border);
+      background: #f9fafb;
+      padding: 10px 10px 8px;
+      display: flex;
+      flex-direction: column;
+      min-height: 200px;
+      max-height: 320px;
+    }
+
+    .panel-title {
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: #9ca3af;
+      margin-bottom: 6px;
+    }
+
+    #transcriptStream {
+      flex: 1;
+      overflow-y: auto;
+      padding-right: 6px;
+    }
+
+    .message {
+      margin-bottom: 10px;
+      border-radius: 12px;
+      padding: 8px 10px;
+      font-size: 13px;
+      line-height: 1.4;
+    }
+
+    .msg-student {
+      background: #e0f2fe;
+      border-left: 3px solid #0284c7;
+      margin-left: 12%;
+    }
+
+    .msg-patient {
+      background: #faf5ff;
+      border-left: 3px solid #7c3aed;
+      margin-right: 12%;
+    }
+
+    .msg-label {
+      font-weight: 600;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 3px;
+      color: #6b7280;
+    }
+
+    .msg-text {
+      color: #111827;
+    }
+
+    #placeholderText {
+      font-size: 13px;
+      color: #9ca3af;
+      text-align: center;
+      margin-top: 24px;
+    }
+
+    .side-panel {
+      border-radius: 14px;
+      border: 1px dashed #d1d5db;
+      background: #f3f4f6;
+      padding: 10px 10px 8px;
+      font-size: 12px;
+      color: #4b5563;
+    }
+
+    .side-panel .label {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #9ca3af;
+      margin-bottom: 3px;
+      font-weight: 600;
+    }
+
+    #debugLog {
+      max-height: 120px;
+      overflow-y: auto;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size: 11px;
+      background: #0b1120;
+      color: #e5e7eb;
+      border-radius: 10px;
+      padding: 6px 8px;
+      margin-top: 8px;
+    }
+
+    .debug-line {
+      margin-bottom: 2px;
+      white-space: pre;
+    }
+
+    #fallbackBox {
+      display: none;
+      margin-top: 10px;
+      font-size: 12px;
+      padding: 8px;
+      border-radius: 10px;
+      border: 1px solid #f97316;
+      background: #fffbeb;
+      color: #92400e;
+    }
+
+    #fallbackTranscript {
+      width: 100%;
+      margin-top: 6px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size: 11px;
+      border-radius: 8px;
+      border: 1px solid #d1d5db;
+      padding: 6px;
+      min-height: 80px;
+      resize: vertical;
+      background: white;
+    }
+
+    #copyBtn {
+      margin-top: 6px;
+      font-size: 11px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      border: none;
+      background: #0369a1;
+      color: white;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <div class="card">
+      <div class="header-row">
+        <div>
+          <div class="title">Mrs. Miller – Discharge Teach-Back</div>
+          <div class="subtitle">Realtime simulated patient conversation (audio in / audio out)</div>
+        </div>
+        <div id="statusPill" class="status-pill">
+          <span class="status-pill-dot"></span>
+          <span id="statusText">Idle – click Start when ready</span>
+        </div>
+      </div>
+
+      <div class="controls-row">
+        <div class="control-buttons">
+          <button id="startBtn" onclick="connectRealtime()">
+            <span class="icon">🎙️</span>
+            <span>Start conversation</span>
+          </button>
+          <button id="stopBtn" onclick="endConversation()" disabled>
+            <span class="icon">⏹</span>
+            <span>End & send transcript</span>
+          </button>
+        </div>
+        <div class="hint">
+          Student speaks → Mrs. Miller responds in real-time. Click <strong>End</strong> when the encounter is finished.
+        </div>
+      </div>
+
+      <div class="body-row">
+        <div class="transcript-panel">
+          <div class="panel-title">Live conversation</div>
+          <div id="transcriptStream">
+            <div id="placeholderText">No dialogue yet. Start the conversation to begin capturing the encounter.</div>
+          </div>
+        </div>
+
+        <div class="side-panel">
+          <div class="label">Session diagnostics</div>
+          <div id="fallbackBox">
+            <div><strong>Note:</strong> Automatic hand-off to Streamlit failed. You can still copy the transcript manually:</div>
+            <textarea id="fallbackTranscript" readonly></textarea>
+            <button id="copyBtn" onclick="copyFallback()">Copy transcript</button>
+          </div>
+          <div id="debugLog"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const { Streamlit } = window;
+
+    let ephemeralToken = null;
+    let peerConnection = null;
+    let dataChannel = null;
+    let audioStream = null;
+    let conversationTranscript = [];
+
+    // --- Streamlit wiring --------------------------------------------------
+
+    function onRender(event) {
+      const data = event.detail;
+      const args = data.args || {};
+      ephemeralToken = args.ephemeralToken || null;
+      debugLog("Ephemeral token received.");
+      Streamlit.setFrameHeight();
+    }
+
+    Streamlit.events.addEventListener(Streamlit.RENDER_EVENT, onRender);
+    Streamlit.setComponentReady();
+    Streamlit.setFrameHeight();
+
+    function setStatus(connected) {
+      const pill = document.getElementById("statusPill");
+      const text = document.getElementById("statusText");
+      if (connected) {
+        pill.classList.add("connected");
+        text.textContent = "Connected – speaking with Mrs. Miller";
+      } else {
+        pill.classList.remove("connected");
+        text.textContent = "Idle – click Start when ready";
+      }
+    }
+
+    function debugLog(msg) {
+      console.log(msg);
+      const log = document.getElementById("debugLog");
+      const line = document.createElement("div");
+      line.className = "debug-line";
+      line.textContent = new Date().toLocaleTimeString() + "  " + msg;
+      log.appendChild(line);
+      log.scrollTop = log.scrollHeight;
+      Streamlit.setFrameHeight();
+    }
+
+    // --- UI helpers --------------------------------------------------------
+
+    function clearPlaceholderIfNeeded() {
+      const placeholder = document.getElementById("placeholderText");
+      if (placeholder) {
+        placeholder.remove();
+      }
+    }
+
+    function addMessage(role, text) {
+      if (!text) return;
+      clearPlaceholderIfNeeded();
+
+      const container = document.getElementById("transcriptStream");
+      const msg = document.createElement("div");
+      msg.className = "message " + (role === "user" ? "msg-student" : "msg-patient");
+
+      const label = document.createElement("div");
+      label.className = "msg-label";
+      label.textContent = role === "user" ? "Student" : "Mrs. Miller";
+
+      const body = document.createElement("div");
+      body.className = "msg-text";
+      body.textContent = text;
+
+      msg.appendChild(label);
+      msg.appendChild(body);
+      container.appendChild(msg);
+      container.scrollTop = container.scrollHeight;
+
+      Streamlit.setFrameHeight();
+    }
+
+    // --- Realtime logic ----------------------------------------------------
+
+    async function connectRealtime() {
+      try {
+        if (!ephemeralToken) {
+          debugLog("❌ No ephemeral token from Streamlit yet.");
+          return;
+        }
+
+        document.getElementById("startBtn").disabled = true;
+        document.getElementById("stopBtn").disabled = true;
+        debugLog("🎤 Requesting microphone…");
+
+        audioStream = await navigator.mediaDevices.getUserMedia({
+          audio: { echoCancellation: true, noiseSuppression: true }
+        });
+
+        debugLog("✅ Microphone granted.");
+        setStatus(true);
+
+        peerConnection = new RTCPeerConnection();
+        audioStream.getTracks().forEach(track => {
+          peerConnection.addTrack(track, audioStream);
+        });
+
+        peerConnection.ontrack = (event) => {
+          const audio = new Audio();
+          audio.srcObject = event.streams[0];
+          audio.play();
+        };
+
+        dataChannel = peerConnection.createDataChannel("oai-events");
+        dataChannel.onopen = () => {
+          debugLog("📡 Data channel open.");
+          document.getElementById("stopBtn").disabled = false;
+        };
+        dataChannel.onmessage = (event) => handleEvent(event.data);
+
+        peerConnection.onconnectionstatechange = () => {
+          debugLog("Connection state: " + peerConnection.connectionState);
+          if (peerConnection.connectionState === "failed" || peerConnection.connectionState === "disconnected") {
+            setStatus(false);
+          }
+        };
+
+        const offer = await peerConnection.createOffer();
+        await peerConnection.setLocalDescription(offer);
+
+        const response = await fetch("https://api.openai.com/v1/realtime", {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${ephemeralToken}`,
+            "Content-Type": "application/sdp"
+          },
+          body: offer.sdp
+        });
+
+        const answerSdp = await response.text();
+        await peerConnection.setRemoteDescription({ type: "answer", sdp: answerSdp });
+
+        debugLog("🟢 Realtime session established.");
+
+      } catch (err) {
+        debugLog("❌ Error starting session: " + err.message);
+        document.getElementById("startBtn").disabled = false;
+        document.getElementById("stopBtn").disabled = true;
+        setStatus(false);
+      }
+    }
+
+    function handleEvent(raw) {
+      try {
+        const event = JSON.parse(raw);
+
+        if (event.type === "conversation.item.input_audio_transcription.completed") {
+          const text = event.transcript;
+          if (text) {
+            debugLog("🎓 STUDENT: " + text.slice(0, 40));
+            addMessage("user", text);
+            conversationTranscript.push({ role: "user", content: text });
+          }
+        }
+
+        if (event.type === "response.audio_transcript.done") {
+          const text = event.transcript;
+          if (text) {
+            debugLog("👩‍⚕️ MILLER: " + text.slice(0, 40));
+            addMessage("assistant", text);
+            conversationTranscript.push({ role: "assistant", content: text });
+          }
+        }
+      } catch (err) {
+        console.error("Event parse error:", err);
+      }
+    }
+
+    function endConversation() {
+      debugLog("💾 Ending conversation. Messages: " + conversationTranscript.length);
+
+      try {
+        if (audioStream) {
+          audioStream.getTracks().forEach(t => t.stop());
+        }
+        if (dataChannel && dataChannel.readyState === "open") {
+          dataChannel.close();
+        }
+        if (peerConnection) {
+          peerConnection.close();
+        }
+      } catch (err) {
+        debugLog("Error closing media: " + err.message);
+      }
+
+      setStatus(false);
+      document.getElementById("stopBtn").disabled = true;
+
+      const jsonTranscript = JSON.stringify(conversationTranscript, null, 2);
+
+      // Try sending the transcript back to Streamlit
+      try {
+        debugLog("📨 Sending transcript back to Streamlit.");
+        Streamlit.setComponentValue(conversationTranscript);
+      } catch (err) {
+        debugLog("⚠️ Failed to send value to Streamlit: " + err.message);
+        // Fallback manual copy
+        const fb = document.getElementById("fallbackBox");
+        const ta = document.getElementById("fallbackTranscript");
+        fb.style.display = "block";
+        ta.value = jsonTranscript;
+        Streamlit.setFrameHeight();
+      }
+    }
+
+    function copyFallback() {
+      const ta = document.getElementById("fallbackTranscript");
+      ta.select();
+      document.execCommand("copy");
+      alert("Transcript copied. You can paste it into a text area in Streamlit if needed.");
+    }
+  </script>
+</body>
+</html>
