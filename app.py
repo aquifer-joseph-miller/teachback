@@ -1,4 +1,4 @@
-# app.py - Auto-feedback with session state trick
+# app.py - Simple manual paste approach
 
 import streamlit as st
 from openai import OpenAI
@@ -13,8 +13,6 @@ FEEDBACK_ASSISTANTS = {
 
 MRS_MILLER_PROMPT_ID = "pmpt_691cc606dfb4819491acd1328e0488dd0854e783a6e7f3ec"
 PROMPT_VERSION = "4"
-
-MIN_MESSAGES_FOR_FEEDBACK = 1
 
 class VPERealtimeApp:
     def __init__(self):
@@ -32,15 +30,11 @@ class VPERealtimeApp:
     
     def init_session_state(self):
         """Initialize session state."""
-        if "show_interface" not in st.session_state:
-            st.session_state.show_interface = True
-        if "transcript_to_process" not in st.session_state:
-            st.session_state.transcript_to_process = None
-        if "feedback_shown" not in st.session_state:
-            st.session_state.feedback_shown = False
+        if "conversation_active" not in st.session_state:
+            st.session_state.conversation_active = True
     
     def create_realtime_session(self):
-        """Create ephemeral token with input transcription enabled."""
+        """Create ephemeral token with input transcription."""
         try:
             import requests
             
@@ -73,7 +67,7 @@ class VPERealtimeApp:
             st.error(f"Error: {e}")
             return None
     
-    def realtime_component(self, ephemeral_token, session_key):
+    def realtime_component(self, ephemeral_token):
         """Create the Realtime API component."""
         
         component_html = f"""
@@ -189,6 +183,34 @@ class VPERealtimeApp:
                     padding: 8px;
                     margin: 10px 0;
                 }}
+                #copyInstructions {{
+                    display: none;
+                    background: #fff3cd;
+                    border: 2px solid #ffc107;
+                    border-radius: 10px;
+                    padding: 20px;
+                    margin-top: 20px;
+                }}
+                #copyInstructions.show {{
+                    display: block;
+                }}
+                .copy-btn {{
+                    background: #2196F3;
+                    color: white;
+                    padding: 10px 20px;
+                    margin-top: 10px;
+                }}
+                #transcriptOutput {{
+                    background: white;
+                    border: 1px solid #ddd;
+                    padding: 10px;
+                    margin: 10px 0;
+                    font-family: monospace;
+                    font-size: 12px;
+                    max-height: 200px;
+                    overflow-y: auto;
+                    border-radius: 5px;
+                }}
             </style>
         </head>
         <body>
@@ -204,7 +226,7 @@ class VPERealtimeApp:
                         🎤 Start Conversation
                     </button>
                     <button id="disconnectBtn" onclick="endConversation()" disabled>
-                        ⏹️ End & Generate Feedback
+                        ⏹️ End Conversation
                     </button>
                 </div>
                 
@@ -215,6 +237,13 @@ class VPERealtimeApp:
                         Conversation will appear here...
                     </p>
                 </div>
+                
+                <div id="copyInstructions">
+                    <h3>📋 Transcript Ready!</h3>
+                    <p><strong>Copy the text below and paste it in the box at the bottom of the page:</strong></p>
+                    <div id="transcriptOutput"></div>
+                    <button class="copy-btn" onclick="copyTranscript()">📋 Copy to Clipboard</button>
+                </div>
             </div>
 
             <script>
@@ -222,7 +251,6 @@ class VPERealtimeApp:
                 let dataChannel = null;
                 let audioStream = null;
                 const ephemeralToken = "{ephemeral_token}";
-                const sessionKey = "{session_key}";
                 let conversationTranscript = [];
                 
                 function debugLog(msg) {{
@@ -258,11 +286,7 @@ class VPERealtimeApp:
                         }};
                         
                         dataChannel = peerConnection.createDataChannel('oai-events');
-                        
-                        dataChannel.onopen = () => {{
-                            debugLog('📡 Data channel open');
-                        }};
-                        
+                        dataChannel.onopen = () => debugLog('📡 Data channel open');
                         dataChannel.onmessage = (event) => handleEvent(event.data);
                         
                         peerConnection.onconnectionstatechange = () => {{
@@ -299,7 +323,6 @@ class VPERealtimeApp:
                     try {{
                         const event = JSON.parse(data);
                         
-                        // Student speech
                         if (event.type === 'conversation.item.input_audio_transcription.completed') {{
                             const text = event.transcript;
                             if (text) {{
@@ -309,7 +332,6 @@ class VPERealtimeApp:
                             }}
                         }}
                         
-                        // Mrs. Miller speech
                         if (event.type === 'response.audio_transcript.done') {{
                             const text = event.transcript;
                             if (text) {{
@@ -353,22 +375,34 @@ class VPERealtimeApp:
                     if (dataChannel) dataChannel.close();
                     if (peerConnection) peerConnection.close();
                     
-                    document.getElementById('status').textContent = 'Generating feedback...';
+                    document.getElementById('status').textContent = 'Conversation Ended';
+                    document.getElementById('status').className = 'status';
                     document.getElementById('disconnectBtn').disabled = true;
                     
-                    // Save to session storage with unique key
-                    const storageKey = 'vpe_transcript_' + sessionKey;
-                    sessionStorage.setItem(storageKey, JSON.stringify(conversationTranscript));
+                    // Show copy instructions
+                    const instructions = document.getElementById('copyInstructions');
+                    instructions.className = 'show';
                     
-                    debugLog('✅ Saved to storage: ' + storageKey);
-                    debugLog('📋 User messages: ' + conversationTranscript.filter(m => m.role === 'user').length);
-                    debugLog('📋 Assistant messages: ' + conversationTranscript.filter(m => m.role === 'assistant').length);
+                    // Display transcript
+                    const output = document.getElementById('transcriptOutput');
+                    output.textContent = JSON.stringify(conversationTranscript, null, 2);
                     
-                    // Reload page to trigger feedback
-                    debugLog('🔄 Reloading page...');
-                    setTimeout(() => {{
-                        window.location.reload();
-                    }}, 1000);
+                    debugLog('✅ Transcript ready to copy!');
+                    debugLog('📊 Total messages: ' + conversationTranscript.length);
+                    
+                    // Scroll to instructions
+                    instructions.scrollIntoView({{ behavior: 'smooth' }});
+                }}
+                
+                function copyTranscript() {{
+                    const output = document.getElementById('transcriptOutput');
+                    const text = output.textContent;
+                    
+                    navigator.clipboard.writeText(text).then(() => {{
+                        alert('✅ Transcript copied! Scroll down and paste it in the box below.');
+                    }}).catch(err => {{
+                        alert('Please manually select and copy the text above.');
+                    }});
                 }}
             </script>
         </body>
@@ -377,38 +411,8 @@ class VPERealtimeApp:
         
         return component_html
     
-    def check_for_transcript(self, session_key):
-        """Check session storage for transcript."""
-        check_script = f"""
-        <script>
-            const storageKey = 'vpe_transcript_{session_key}';
-            const transcript = sessionStorage.getItem(storageKey);
-            if (transcript) {{
-                console.log('Found transcript in storage');
-                // Clear it
-                sessionStorage.removeItem(storageKey);
-                // Store in a hidden input that Streamlit can read
-                const input = document.createElement('input');
-                input.type = 'hidden';
-                input.id = 'transcript_data';
-                input.value = transcript;
-                document.body.appendChild(input);
-                
-                // Try to notify Streamlit
-                if (window.parent.Streamlit) {{
-                    window.parent.Streamlit.setComponentValue(transcript);
-                }}
-            }}
-        </script>
-        """
-        return components.html(check_script, height=0)
-    
     def generate_feedback(self, transcript_data):
         """Generate feedback from transcript."""
-        if not transcript_data or len(transcript_data) < MIN_MESSAGES_FOR_FEEDBACK:
-            st.warning("Transcript too short for feedback.")
-            return
-        
         transcript_text = "\n\n".join([
             f"{'STUDENT' if msg['role'] == 'user' else 'MRS. MILLER'}: {msg['content']}"
             for msg in transcript_data
@@ -416,7 +420,7 @@ class VPERealtimeApp:
         
         st.markdown("### 📝 Conversation Transcript")
         with st.expander("View Full Transcript"):
-            st.text_area("", transcript_text, height=200)
+            st.text_area("", transcript_text, height=200, key="transcript_display")
         
         try:
             feedback_thread = self.client.beta.threads.create()
@@ -465,8 +469,6 @@ Provide comprehensive feedback."""
                     st.subheader("📋 Comprehensive Feedback")
                     st.markdown(feedback)
                     
-                    st.session_state.feedback_shown = True
-                    
                     st.markdown("---")
                     col1, col2 = st.columns(2)
                     with col1:
@@ -485,7 +487,7 @@ Provide comprehensive feedback."""
                         )
         
         except Exception as e:
-            st.error(f"Error generating feedback: {e}")
+            st.error(f"Error: {e}")
     
     def run(self):
         """Main application."""
@@ -498,21 +500,15 @@ Provide comprehensive feedback."""
         st.title("🎤 Virtual Patient Encounter - Mrs. Miller")
         st.markdown("*High Value Care Case 04*")
         
-        # Generate unique session key
-        if "session_key" not in st.session_state:
-            import random
-            st.session_state.session_key = f"session_{random.randint(1000, 9999)}"
-        
-        session_key = st.session_state.session_key
-        
         with st.sidebar:
             st.header("Instructions")
             st.info("""
             1. Click "Start Conversation"
             2. Allow microphone access  
             3. Speak with Mrs. Miller
-            4. Click "End & Generate Feedback"
-            5. Page reloads with feedback
+            4. Click "End Conversation"
+            5. **Copy the transcript** shown in the yellow box
+            6. **Paste it below** and click "Generate Feedback"
             """)
             
             if st.button("🔄 Start New Session", use_container_width=True):
@@ -520,37 +516,39 @@ Provide comprehensive feedback."""
                     del st.session_state[key]
                 st.rerun()
         
-        # Check for saved transcript from previous page load
-        self.check_for_transcript(session_key)
+        # Show conversation interface
+        if st.session_state.conversation_active:
+            ephemeral_token = self.create_realtime_session()
+            
+            if ephemeral_token:
+                st.success("✅ Voice session ready!")
+                html_code = self.realtime_component(ephemeral_token)
+                components.html(html_code, height=850, scrolling=True)
         
-        # Manual input as backup
+        # Feedback generation section
         st.markdown("---")
-        st.markdown("### Enter Transcript to Generate Feedback")
+        st.markdown("## 📋 Generate Feedback")
+        st.info("After ending the conversation above, copy the transcript and paste it here:")
+        
         transcript_input = st.text_area(
-            "Paste transcript JSON here (from browser console if needed)",
-            height=150,
-            placeholder='[{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}]'
+            "Paste Transcript JSON",
+            height=200,
+            placeholder='[{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}]',
+            key="transcript_input"
         )
         
         if st.button("✨ Generate Feedback", type="primary", use_container_width=True):
             if transcript_input:
                 try:
                     transcript_data = json.loads(transcript_input)
-                    self.generate_feedback(transcript_data)
-                except json.JSONDecodeError:
-                    st.error("Invalid JSON format")
+                    if len(transcript_data) > 0:
+                        self.generate_feedback(transcript_data)
+                    else:
+                        st.warning("Transcript is empty")
+                except json.JSONDecodeError as e:
+                    st.error(f"Invalid JSON format: {e}")
             else:
-                st.warning("Please paste the transcript JSON")
-        
-        # Show conversation interface if feedback not yet shown
-        if not st.session_state.feedback_shown:
-            st.markdown("---")
-            ephemeral_token = self.create_realtime_session()
-            
-            if ephemeral_token:
-                st.success("✅ Voice session ready!")
-                html_code = self.realtime_component(ephemeral_token, session_key)
-                components.html(html_code, height=700, scrolling=True)
+                st.warning("Please paste the transcript JSON first")
 
 if __name__ == "__main__":
     app = VPERealtimeApp()
