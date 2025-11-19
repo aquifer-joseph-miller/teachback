@@ -1,9 +1,10 @@
-# app.py - Fixed transcript capture and auto-feedback
+# app.py - Fixed transcript capture and feedback display
 
 import streamlit as st
 from openai import OpenAI
 import streamlit.components.v1 as components
 import time
+import json
 
 # Configuration
 FEEDBACK_ASSISTANTS = {
@@ -14,7 +15,7 @@ FEEDBACK_ASSISTANTS = {
 MRS_MILLER_PROMPT_ID = "pmpt_691cc606dfb4819491acd1328e0488dd0854e783a6e7f3ec"
 PROMPT_VERSION = "4"
 
-MIN_MESSAGES_FOR_FEEDBACK = 3
+MIN_MESSAGES_FOR_FEEDBACK = 2  # Lowered threshold for testing
 
 class VPERealtimeApp:
     def __init__(self):
@@ -34,12 +35,10 @@ class VPERealtimeApp:
         """Initialize session state."""
         if "transcript" not in st.session_state:
             st.session_state.transcript = []
-        if "session_active" not in st.session_state:
-            st.session_state.session_active = False
         if "conversation_ended" not in st.session_state:
             st.session_state.conversation_ended = False
-        if "generate_feedback_now" not in st.session_state:
-            st.session_state.generate_feedback_now = False
+        if "feedback_generated" not in st.session_state:
+            st.session_state.feedback_generated = False
     
     def create_realtime_session(self):
         """Create ephemeral token for Realtime API."""
@@ -66,21 +65,20 @@ class VPERealtimeApp:
                 return data.get("client_secret", {}).get("value")
             else:
                 st.error(f"Failed to create session: {response.status_code}")
-                try:
-                    error_data = response.json()
-                    st.error(f"Error details: {error_data}")
-                except:
-                    st.error(f"Response: {response.text}")
                 return None
                 
         except Exception as e:
             st.error(f"Error creating session: {e}")
-            import traceback
-            st.error(traceback.format_exc())
             return None
     
     def realtime_component(self, ephemeral_token):
         """Create the Realtime API WebSocket component."""
+        
+        # Use Streamlit's component value to receive messages
+        component_value = components.declare_component(
+            "realtime_audio",
+            path=None,
+        )
         
         component_html = f"""
         <!DOCTYPE html>
@@ -212,6 +210,16 @@ class VPERealtimeApp:
                     margin: 10px 0;
                     border-left: 4px solid #c62828;
                 }}
+                
+                .debug {{
+                    background: #e8f5e9;
+                    color: #2e7d32;
+                    padding: 10px;
+                    border-radius: 5px;
+                    margin: 5px 0;
+                    font-size: 12px;
+                    font-family: monospace;
+                }}
             </style>
         </head>
         <body>
@@ -233,6 +241,8 @@ class VPERealtimeApp:
                 
                 <div id="error" style="display: none;" class="error"></div>
                 
+                <div id="debugLog" style="max-height: 150px; overflow-y: auto; margin: 10px 0;"></div>
+                
                 <div class="transcript" id="transcript">
                     <p style="text-align: center; color: #999;">
                         Conversation transcript will appear here...
@@ -245,12 +255,25 @@ class VPERealtimeApp:
                 let dataChannel = null;
                 let audioStream = null;
                 const ephemeralToken = "{ephemeral_token}";
+                let conversationTranscript = [];
+                
+                function debugLog(message) {{
+                    console.log(message);
+                    const debugDiv = document.getElementById('debugLog');
+                    const logEntry = document.createElement('div');
+                    logEntry.className = 'debug';
+                    logEntry.textContent = new Date().toLocaleTimeString() + ': ' + message;
+                    debugDiv.appendChild(logEntry);
+                    debugDiv.scrollTop = debugDiv.scrollHeight;
+                }}
                 
                 async function connectRealtime() {{
                     try {{
                         document.getElementById('connectBtn').disabled = true;
                         document.getElementById('status').textContent = 'Requesting microphone access...';
                         document.getElementById('error').style.display = 'none';
+                        
+                        debugLog('Requesting microphone access...');
                         
                         // Get microphone access
                         audioStream = await navigator.mediaDevices.getUserMedia({{ 
@@ -261,6 +284,7 @@ class VPERealtimeApp:
                             }}
                         }});
                         
+                        debugLog('Microphone access granted');
                         document.getElementById('status').textContent = 'Connecting to Mrs. Miller...';
                         
                         // Create peer connection
@@ -269,10 +293,12 @@ class VPERealtimeApp:
                         // Add audio tracks
                         audioStream.getTracks().forEach(track => {{
                             peerConnection.addTrack(track, audioStream);
+                            debugLog('Added audio track');
                         }});
                         
                         // Handle incoming audio
                         peerConnection.ontrack = (event) => {{
+                            debugLog('Received audio track');
                             const remoteAudio = new Audio();
                             remoteAudio.srcObject = event.streams[0];
                             remoteAudio.play();
@@ -282,7 +308,7 @@ class VPERealtimeApp:
                         dataChannel = peerConnection.createDataChannel('oai-events');
                         
                         dataChannel.onopen = () => {{
-                            console.log('Data channel opened');
+                            debugLog('Data channel opened');
                         }};
                         
                         dataChannel.onmessage = (event) => {{
@@ -291,7 +317,7 @@ class VPERealtimeApp:
                         
                         // Connection state handling
                         peerConnection.onconnectionstatechange = () => {{
-                            console.log('Connection state:', peerConnection.connectionState);
+                            debugLog('Connection state: ' + peerConnection.connectionState);
                             
                             if (peerConnection.connectionState === 'connected') {{
                                 document.getElementById('status').textContent = '🎤 Connected - Speaking with Mrs. Miller';
@@ -307,6 +333,8 @@ class VPERealtimeApp:
                         // Create offer
                         const offer = await peerConnection.createOffer();
                         await peerConnection.setLocalDescription(offer);
+                        
+                        debugLog('Sending offer to OpenAI...');
                         
                         // Send offer to OpenAI Realtime API
                         const response = await fetch('https://api.openai.com/v1/realtime', {{
@@ -329,8 +357,11 @@ class VPERealtimeApp:
                             sdp: answerSdp
                         }});
                         
+                        debugLog('Connection established!');
+                        
                     }} catch (error) {{
                         console.error('Error connecting:', error);
+                        debugLog('ERROR: ' + error.message);
                         showError('Failed to connect: ' + error.message);
                         document.getElementById('connectBtn').disabled = false;
                         document.getElementById('status').textContent = 'Connection failed';
@@ -341,69 +372,62 @@ class VPERealtimeApp:
                 function handleRealtimeEvent(data) {{
                     try {{
                         const event = JSON.parse(data);
-                        console.log('Realtime event:', event.type, event);
+                        debugLog('Event: ' + event.type);
                         
-                        // Handle input audio transcription (USER SPEECH)
-                        if (event.type === 'conversation.item.input_audio_transcription.completed') {{
+                        // Log all events to see what we're getting
+                        if (event.type.includes('transcript') || event.type.includes('audio')) {{
+                            debugLog('AUDIO EVENT: ' + JSON.stringify(event).substring(0, 100));
+                        }}
+                        
+                        // Capture USER speech (input audio transcription)
+                        if (event.type === 'conversation.item.input_audio_transcription.completed' ||
+                            event.type === 'input_audio_transcription.completed') {{
+                            
                             if (event.transcript) {{
-                                console.log('User said:', event.transcript);
+                                debugLog('USER SAID: ' + event.transcript);
                                 addToTranscript('user', event.transcript);
-                                
-                                window.parent.postMessage({{
-                                    type: 'transcript_update',
+                                conversationTranscript.push({{
                                     role: 'user',
                                     content: event.transcript
-                                }}, '*');
+                                }});
                             }}
                         }}
                         
-                        // Handle response audio transcript (ASSISTANT SPEECH)
-                        if (event.type === 'response.audio_transcript.done') {{
-                            if (event.transcript) {{
-                                console.log('Assistant said:', event.transcript);
-                                addToTranscript('assistant', event.transcript);
-                                
-                                window.parent.postMessage({{
-                                    type: 'transcript_update',
-                                    role: 'assistant',
-                                    content: event.transcript
-                                }}, '*');
-                            }}
-                        }}
-                        
-                        // Fallback: Handle conversation item creation
-                        if (event.type === 'conversation.item.created') {{
-                            const item = event.item;
-                            console.log('Conversation item:', item);
+                        // Capture ASSISTANT speech (response audio transcript)
+                        if (event.type === 'response.audio_transcript.done' ||
+                            event.type === 'response.done' && event.response?.output) {{
                             
-                            if (item.type === 'message' && item.role) {{
-                                let content = '';
+                            let transcript = event.transcript;
+                            
+                            if (!transcript && event.response?.output) {{
+                                // Try to extract from response output
+                                const outputs = Array.isArray(event.response.output) ? 
+                                    event.response.output : [event.response.output];
                                 
-                                // Extract content from various formats
-                                if (Array.isArray(item.content)) {{
-                                    content = item.content
-                                        .map(c => c.transcript || c.text || '')
-                                        .filter(t => t.length > 0)
-                                        .join(' ');
-                                }} else if (typeof item.content === 'string') {{
-                                    content = item.content;
-                                }}
-                                
-                                if (content && content.length > 0) {{
-                                    console.log('Message content:', item.role, content);
-                                    addToTranscript(item.role, content);
-                                    
-                                    window.parent.postMessage({{
-                                        type: 'transcript_update',
-                                        role: item.role,
-                                        content: content
-                                    }}, '*');
-                                }}
+                                transcript = outputs
+                                    .map(o => o.content?.map(c => c.transcript || c.text || '').join(' '))
+                                    .filter(t => t)
+                                    .join(' ');
                             }}
+                            
+                            if (transcript) {{
+                                debugLog('ASSISTANT SAID: ' + transcript);
+                                addToTranscript('assistant', transcript);
+                                conversationTranscript.push({{
+                                    role: 'assistant',
+                                    content: transcript
+                                }});
+                            }}
+                        }}
+                        
+                        // Alternative: capture from response.audio_transcript.delta (streaming)
+                        if (event.type === 'response.audio_transcript.delta') {{
+                            debugLog('STREAMING TRANSCRIPT: ' + event.delta);
                         }}
                         
                     }} catch (error) {{
                         console.error('Error handling event:', error);
+                        debugLog('ERROR in event handler: ' + error.message);
                     }}
                 }}
                 
@@ -435,6 +459,8 @@ class VPERealtimeApp:
                 }}
                 
                 function disconnectRealtime() {{
+                    debugLog('Disconnecting and sending transcript to Streamlit...');
+                    
                     if (audioStream) {{
                         audioStream.getTracks().forEach(track => track.stop());
                         audioStream = null;
@@ -450,15 +476,25 @@ class VPERealtimeApp:
                         peerConnection = null;
                     }}
                     
-                    document.getElementById('status').textContent = 'Disconnected - Generating feedback...';
+                    document.getElementById('status').textContent = 'Disconnected';
                     document.getElementById('status').className = 'status disconnected';
                     document.getElementById('connectBtn').disabled = false;
                     document.getElementById('disconnectBtn').disabled = true;
                     
-                    // Notify Streamlit to generate feedback
+                    // Send full transcript to Streamlit
+                    debugLog('Sending ' + conversationTranscript.length + ' messages to Streamlit');
+                    
                     window.parent.postMessage({{
-                        type: 'conversation_ended'
+                        type: 'full_transcript',
+                        transcript: conversationTranscript
                     }}, '*');
+                    
+                    // Small delay then trigger feedback
+                    setTimeout(() => {{
+                        window.parent.postMessage({{
+                            type: 'conversation_ended'
+                        }}, '*');
+                    }}, 500);
                 }}
                 
                 function showError(message) {{
@@ -476,7 +512,7 @@ class VPERealtimeApp:
     def generate_feedback(self):
         """Generate feedback from transcript."""
         if len(st.session_state.transcript) < MIN_MESSAGES_FOR_FEEDBACK:
-            st.warning(f"Need at least {MIN_MESSAGES_FOR_FEEDBACK} exchanges for feedback")
+            st.warning(f"Conversation too short. Need at least {MIN_MESSAGES_FOR_FEEDBACK} exchanges.")
             return
         
         # Build transcript
@@ -484,6 +520,9 @@ class VPERealtimeApp:
             f"{'STUDENT' if msg['role'] == 'user' else 'MRS. MILLER'}: {msg['content']}"
             for msg in st.session_state.transcript
         ])
+        
+        st.markdown("### 📝 Conversation Transcript")
+        st.text_area("Full Transcript", transcript, height=200)
         
         try:
             feedback_thread = self.client.beta.threads.create()
@@ -508,7 +547,10 @@ Please provide comprehensive feedback on the student's performance."""
             )
             
             with st.spinner("🧠 Generating comprehensive feedback..."):
-                while True:
+                max_wait = 180  # 3 minutes
+                elapsed = 0
+                
+                while elapsed < max_wait:
                     run_status = self.client.beta.threads.runs.retrieve(
                         thread_id=feedback_thread.id,
                         run_id=run.id
@@ -521,6 +563,11 @@ Please provide comprehensive feedback on the student's performance."""
                         return
                     
                     time.sleep(2)
+                    elapsed += 2
+                
+                if elapsed >= max_wait:
+                    st.error("Feedback generation timed out. Please try again.")
+                    return
                 
                 messages = self.client.beta.threads.messages.list(
                     thread_id=feedback_thread.id,
@@ -530,8 +577,11 @@ Please provide comprehensive feedback on the student's performance."""
                 if messages.data:
                     feedback_text = messages.data[0].content[0].text.value
                     
+                    st.markdown("---")
                     st.subheader("📋 Comprehensive Feedback")
                     st.markdown(feedback_text)
+                    
+                    st.markdown("---")
                     
                     col1, col2 = st.columns(2)
                     with col1:
@@ -539,18 +589,24 @@ Please provide comprehensive feedback on the student's performance."""
                             "📥 Download Transcript",
                             transcript,
                             file_name="mrs_miller_transcript.txt",
-                            mime="text/plain"
+                            mime="text/plain",
+                            use_container_width=True
                         )
                     with col2:
                         st.download_button(
                             "📥 Download Feedback",
                             feedback_text,
                             file_name="mrs_miller_feedback.txt",
-                            mime="text/plain"
+                            mime="text/plain",
+                            use_container_width=True
                         )
+                    
+                    st.session_state.feedback_generated = True
         
         except Exception as e:
             st.error(f"Failed to generate feedback: {e}")
+            import traceback
+            st.error(traceback.format_exc())
     
     def run(self):
         """Main application."""
@@ -579,25 +635,26 @@ Please provide comprehensive feedback on the student's performance."""
             
             st.markdown("---")
             
-            if st.button("🔄 New Session", use_container_width=True):
-                st.session_state.transcript = []
-                st.session_state.conversation_ended = False
-                st.session_state.generate_feedback_now = False
+            if st.button("🔄 Start Over", use_container_width=True):
+                for key in list(st.session_state.keys()):
+                    del st.session_state[key]
                 st.rerun()
             
             st.markdown("---")
             
             if st.session_state.transcript:
-                st.metric("Messages", len(st.session_state.transcript))
+                st.metric("Messages Captured", len(st.session_state.transcript))
                 
-                with st.expander("View Transcript"):
-                    for msg in st.session_state.transcript:
-                        role = "🎓 Student" if msg['role'] == 'user' else "👩‍⚕️ Mrs. Miller"
-                        st.markdown(f"**{role}:** {msg['content']}")
+                user_count = len([m for m in st.session_state.transcript if m['role'] == 'user'])
+                assistant_count = len([m for m in st.session_state.transcript if m['role'] == 'assistant'])
+                
+                col1, col2 = st.columns(2)
+                col1.metric("Student", user_count)
+                col2.metric("Mrs. Miller", assistant_count)
             
             st.caption("🎯 Using OpenAI Realtime API")
         
-        # Create session and show component
+        # Show conversation interface if not ended
         if not st.session_state.conversation_ended:
             with st.spinner("🔄 Initializing voice session..."):
                 ephemeral_token = self.create_realtime_session()
@@ -607,38 +664,15 @@ Please provide comprehensive feedback on the student's performance."""
                 
                 # Display the realtime component
                 html_code = self.realtime_component(ephemeral_token)
-                components.html(html_code, height=700, scrolling=True)
-                
-                # JavaScript listener for messages from iframe
-                st.markdown("""
-                <script>
-                window.addEventListener('message', function(event) {
-                    if (event.data.type === 'transcript_update') {
-                        // This gets handled by Streamlit's component system
-                        console.log('Transcript update:', event.data);
-                    } else if (event.data.type === 'conversation_ended') {
-                        // Trigger page reload to show feedback
-                        window.location.reload();
-                    }
-                });
-                </script>
-                """, unsafe_allow_html=True)
+                components.html(html_code, height=800, scrolling=True)
             else:
                 st.error("Failed to initialize voice session. Please refresh the page.")
-                st.stop()
         
-        # Auto-generate feedback when conversation ends
-        if st.session_state.conversation_ended and not st.session_state.generate_feedback_now:
-            st.session_state.generate_feedback_now = True
-            st.rerun()
-        
-        if st.session_state.generate_feedback_now:
-            if len(st.session_state.transcript) >= MIN_MESSAGES_FOR_FEEDBACK:
-                self.generate_feedback()
-            else:
-                st.info(f"Conversation too short for feedback. Need at least {MIN_MESSAGES_FOR_FEEDBACK} exchanges.")
+        # Generate feedback when conversation ends
+        elif not st.session_state.feedback_generated:
+            st.info("📊 Conversation ended. Generating feedback...")
+            self.generate_feedback()
 
 if __name__ == "__main__":
     app = VPERealtimeApp()
     app.run()
-    
