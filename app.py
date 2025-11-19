@@ -1,4 +1,4 @@
-# app.py - Realtime API with WebSocket
+# app.py - Realtime API with correct prompt version
 
 import streamlit as st
 from openai import OpenAI
@@ -12,7 +12,7 @@ FEEDBACK_ASSISTANTS = {
 
 # Your Mrs. Miller prompt ID from the Realtime API
 MRS_MILLER_PROMPT_ID = "pmpt_691cc606dfb4819491acd1328e0488dd0854e783a6e7f3ec"
-PROMPT_VERSION = "3"
+PROMPT_VERSION = "4"  # Updated to version 4
 
 MIN_MESSAGES_FOR_FEEDBACK = 3
 
@@ -53,9 +53,7 @@ class VPERealtimeApp:
                     "prompt": {
                         "id": MRS_MILLER_PROMPT_ID,
                         "version": PROMPT_VERSION
-                    },
-                    "model": "gpt-4o-realtime-preview-2024-12-17",
-                    "voice": "sage"
+                    }
                 }
             )
             
@@ -63,11 +61,18 @@ class VPERealtimeApp:
                 data = response.json()
                 return data.get("client_secret", {}).get("value")
             else:
-                st.error(f"Failed to create session: {response.status_code} - {response.text}")
+                st.error(f"Failed to create session: {response.status_code}")
+                try:
+                    error_data = response.json()
+                    st.error(f"Error details: {error_data}")
+                except:
+                    st.error(f"Response: {response.text}")
                 return None
                 
         except Exception as e:
             st.error(f"Error creating session: {e}")
+            import traceback
+            st.error(traceback.format_exc())
             return None
     
     def realtime_component(self, ephemeral_token):
@@ -135,7 +140,7 @@ class VPERealtimeApp:
                     box-shadow: 0 4px 15px rgba(0,0,0,0.2);
                 }}
                 
-                button:hover {{
+                button:hover:not(:disabled) {{
                     transform: translateY(-2px);
                     box-shadow: 0 6px 20px rgba(0,0,0,0.3);
                 }}
