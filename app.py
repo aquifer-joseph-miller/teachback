@@ -1,10 +1,12 @@
 # app.py - Streamlit app with custom VPE component
 
 import streamlit as st
-import streamlit.components.v1 as components
 from openai import OpenAI
 import time
 import json
+
+from vpe_component import vpe_component  # ✅ use our custom component wrapper
+
 
 # ---------- Configuration ----------
 
@@ -14,11 +16,6 @@ FEEDBACK_ASSISTANTS = {
 
 MRS_MILLER_PROMPT_ID = "pmpt_691cc606dfb4819491acd1328e0488dd0854e783a6e7f3ec"
 PROMPT_VERSION = "4"
-
-# Declare the custom component (served from ./vpe_component)
-vpe_component = components.declare_component(
-    "vpe_component", path="vpe_component"
-)
 
 
 # ---------- App class ----------
