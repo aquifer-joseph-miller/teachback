@@ -742,6 +742,28 @@ Provide comprehensive feedback."""
             border-radius: 8px;
         }
         
+        /* Sidebar selectbox - make it more obvious */
+        [data-testid="stSidebar"] .stSelectbox > div > div {
+            background-color: rgba(255, 255, 255, 0.2) !important;
+            border: 2px solid rgba(255, 255, 255, 0.4) !important;
+            border-radius: 8px;
+            padding: 0.5rem;
+            cursor: pointer;
+        }
+        
+        [data-testid="stSidebar"] .stSelectbox > div > div:hover {
+            background-color: rgba(255, 255, 255, 0.3) !important;
+            border-color: rgba(255, 255, 255, 0.6) !important;
+        }
+        
+        [data-testid="stSidebar"] .stSelectbox svg {
+            fill: white !important;
+        }
+        
+        [data-testid="stSidebar"] .stSelectbox [data-baseweb="select"] > div {
+            background-color: transparent !important;
+        }
+        
         /* Main title */
         .main h1 {
             font-size: 2.5rem;
@@ -777,6 +799,7 @@ Provide comprehensive feedback."""
         
         with st.sidebar:
             st.markdown("## 🏥 Patient Selection")
+            st.markdown('<p style="font-size: 0.9rem; margin-bottom: 0.5rem; opacity: 0.9;">Select a patient scenario:</p>', unsafe_allow_html=True)
             
             # Patient selector
             selected = st.selectbox(
