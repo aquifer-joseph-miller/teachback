@@ -1,18 +1,11 @@
-# app.py - Simple manual paste approach
+# app.py - Multi-patient support
 
 import streamlit as st
 from openai import OpenAI
 import streamlit.components.v1 as components
 import time
 import json
-
-# Configuration
-FEEDBACK_ASSISTANTS = {
-    "Mrs. Miller Feedback": "asst_J2yNXKyAVxZ9yhxVD1o4roNh",
-}
-
-MRS_MILLER_PROMPT_ID = "pmpt_691cc606dfb4819491acd1328e0488dd0854e783a6e7f3ec"
-PROMPT_VERSION = "4"
+from patient_config import PATIENT_SCENARIOS, get_patient_config, get_all_patients
 
 class VPERealtimeApp:
     def __init__(self):
@@ -32,8 +25,10 @@ class VPERealtimeApp:
         """Initialize session state."""
         if "conversation_active" not in st.session_state:
             st.session_state.conversation_active = True
+        if "selected_patient" not in st.session_state:
+            st.session_state.selected_patient = get_all_patients()[0]
     
-    def create_realtime_session(self):
+    def create_realtime_session(self, patient_config):
         """Create ephemeral token with input transcription."""
         try:
             import requests
@@ -47,8 +42,8 @@ class VPERealtimeApp:
                 },
                 json={
                     "prompt": {
-                        "id": MRS_MILLER_PROMPT_ID,
-                        "version": PROMPT_VERSION
+                        "id": patient_config["prompt_id"],
+                        "version": patient_config["prompt_version"]
                     },
                     "input_audio_transcription": {
                         "model": "whisper-1"
@@ -67,8 +62,11 @@ class VPERealtimeApp:
             st.error(f"Error: {e}")
             return None
     
-    def realtime_component(self, ephemeral_token):
+    def realtime_component(self, ephemeral_token, patient_config):
         """Create the Realtime API component."""
+        
+        patient_icon = patient_config["icon"]
+        patient_name = patient_config["display_name"].split(" - ")[0]
         
         component_html = f"""
         <!DOCTYPE html>
@@ -216,7 +214,7 @@ class VPERealtimeApp:
         <body>
             <div class="container">
                 <h2 style="text-align: center; margin-bottom: 20px;">
-                    🎤 Voice Conversation with Mrs. Miller
+                    🎤 Voice Conversation with {patient_name}
                 </h2>
                 
                 <div id="status" class="status">Ready to connect</div>
@@ -335,7 +333,7 @@ class VPERealtimeApp:
                         if (event.type === 'response.audio_transcript.done') {{
                             const text = event.transcript;
                             if (text) {{
-                                debugLog('👩‍⚕️ MILLER: ' + text.substring(0, 30));
+                                debugLog('{patient_icon} {patient_name}: ' + text.substring(0, 30));
                                 addMessage('assistant', text);
                                 conversationTranscript.push({{ role: 'assistant', content: text }});
                             }}
@@ -357,7 +355,7 @@ class VPERealtimeApp:
                     
                     const speaker = document.createElement('div');
                     speaker.className = 'speaker';
-                    speaker.textContent = role === 'user' ? '🎓 Student' : '👩‍⚕️ Mrs. Miller';
+                    speaker.textContent = role === 'user' ? '🎓 Student' : '{patient_icon} {patient_name}';
                     
                     const text = document.createElement('div');
                     text.textContent = content;
@@ -379,18 +377,15 @@ class VPERealtimeApp:
                     document.getElementById('status').className = 'status';
                     document.getElementById('disconnectBtn').disabled = true;
                     
-                    // Show copy instructions
                     const instructions = document.getElementById('copyInstructions');
                     instructions.className = 'show';
                     
-                    // Display transcript
                     const output = document.getElementById('transcriptOutput');
                     output.textContent = JSON.stringify(conversationTranscript, null, 2);
                     
                     debugLog('✅ Transcript ready to copy!');
                     debugLog('📊 Total messages: ' + conversationTranscript.length);
                     
-                    // Scroll to instructions
                     instructions.scrollIntoView({{ behavior: 'smooth' }});
                 }}
                 
@@ -411,10 +406,12 @@ class VPERealtimeApp:
         
         return component_html
     
-    def generate_feedback(self, transcript_data):
+    def generate_feedback(self, transcript_data, patient_config):
         """Generate feedback from transcript."""
+        patient_name = patient_config["display_name"].split(" - ")[0]
+        
         transcript_text = "\n\n".join([
-            f"{'STUDENT' if msg['role'] == 'user' else 'MRS. MILLER'}: {msg['content']}"
+            f"{'STUDENT' if msg['role'] == 'user' else patient_name.upper()}: {msg['content']}"
             for msg in transcript_data
         ])
         
@@ -439,7 +436,7 @@ Provide comprehensive feedback."""
             
             run = self.client.beta.threads.runs.create(
                 thread_id=feedback_thread.id,
-                assistant_id=FEEDBACK_ASSISTANTS["Mrs. Miller Feedback"]
+                assistant_id=patient_config["feedback_assistant_id"]
             )
             
             with st.spinner("🧠 Generating comprehensive feedback..."):
@@ -492,20 +489,42 @@ Provide comprehensive feedback."""
     def run(self):
         """Main application."""
         st.set_page_config(
-            page_title="VPE - Mrs. Miller",
+            page_title="VPE - Virtual Patient Encounters",
             page_icon="🎤",
             layout="wide"
         )
         
-        st.title("🎤 Virtual Patient Encounter - Mrs. Miller")
-        st.markdown("*High Value Care Case 04*")
+        # Get current patient config
+        patient_config = get_patient_config(st.session_state.selected_patient)
+        
+        st.title(f"🎤 Virtual Patient Encounter - {patient_config['display_name']}")
+        st.markdown(f"*{patient_config['scenario_type']}*")
         
         with st.sidebar:
-            st.header("Instructions")
-            st.info("""
+            st.header("🏥 Patient Selection")
+            
+            # Patient selector
+            selected = st.selectbox(
+                "Choose a patient:",
+                options=get_all_patients(),
+                index=get_all_patients().index(st.session_state.selected_patient),
+                format_func=lambda x: get_patient_config(x)["display_name"]
+            )
+            
+            # Update if changed
+            if selected != st.session_state.selected_patient:
+                st.session_state.selected_patient = selected
+                st.rerun()
+            
+            # Show scenario description
+            st.info(patient_config["description"])
+            
+            st.markdown("---")
+            st.header("📋 Instructions")
+            st.markdown("""
             1. Click "Start Conversation"
             2. Allow microphone access  
-            3. Speak with Mrs. Miller
+            3. Speak with the patient
             4. Click "End Conversation"
             5. **Copy the transcript** shown in the yellow box
             6. **Paste it below** and click "Generate Feedback"
@@ -513,16 +532,17 @@ Provide comprehensive feedback."""
             
             if st.button("🔄 Start New Session", use_container_width=True):
                 for key in list(st.session_state.keys()):
-                    del st.session_state[key]
+                    if key != "selected_patient":  # Preserve patient selection
+                        del st.session_state[key]
                 st.rerun()
         
         # Show conversation interface
         if st.session_state.conversation_active:
-            ephemeral_token = self.create_realtime_session()
+            ephemeral_token = self.create_realtime_session(patient_config)
             
             if ephemeral_token:
                 st.success("✅ Voice session ready!")
-                html_code = self.realtime_component(ephemeral_token)
+                html_code = self.realtime_component(ephemeral_token, patient_config)
                 components.html(html_code, height=850, scrolling=True)
         
         # Feedback generation section
@@ -542,7 +562,7 @@ Provide comprehensive feedback."""
                 try:
                     transcript_data = json.loads(transcript_input)
                     if len(transcript_data) > 0:
-                        self.generate_feedback(transcript_data)
+                        self.generate_feedback(transcript_data, patient_config)
                     else:
                         st.warning("Transcript is empty")
                 except json.JSONDecodeError as e:
