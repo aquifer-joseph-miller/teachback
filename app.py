@@ -246,6 +246,16 @@ class VPERealtimeApp:
                     margin-bottom: 8px;
                     font-size: 14px;
                     letter-spacing: 0.3px;
+                    display: flex;
+                    align-items: center;
+                    gap: 8px;
+                }}
+                
+                .speaker img {{
+                    width: 24px;
+                    height: 24px;
+                    border-radius: 50%;
+                    object-fit: cover;
                 }}
                 
                 .user .speaker {{
@@ -398,6 +408,8 @@ class VPERealtimeApp:
                 let dataChannel = null;
                 let audioStream = null;
                 const ephemeralToken = "{ephemeral_token}";
+                const patientIcon = "{patient_icon}";
+                const patientName = "{patient_name}";
                 let conversationTranscript = [];
                 
                 function debugLog(msg) {{
@@ -482,7 +494,7 @@ class VPERealtimeApp:
                         if (event.type === 'response.audio_transcript.done') {{
                             const text = event.transcript;
                             if (text) {{
-                                debugLog('{patient_icon} Patient responded');
+                                debugLog('Patient responded');
                                 addMessage('assistant', text);
                                 conversationTranscript.push({{ role: 'assistant', content: text }});
                             }}
@@ -504,7 +516,12 @@ class VPERealtimeApp:
                     
                     const speaker = document.createElement('div');
                     speaker.className = 'speaker';
-                    speaker.textContent = role === 'user' ? '🎓 STUDENT' : '{patient_icon} {patient_name.upper()}';
+                    
+                    if (role === 'user') {{
+                        speaker.textContent = '🎓 STUDENT';
+                    }} else {{
+                        speaker.innerHTML = `<img src="${{patientIcon}}" alt="Patient"> ${{patientName.toUpperCase()}}`;
+                    }}
                     
                     const text = document.createElement('div');
                     text.className = 'message-content';
@@ -776,6 +793,34 @@ Provide comprehensive feedback."""
             border-color: #E0E4E8;
             margin: 2rem 0;
         }
+        
+        /* Patient header with icon */
+        .patient-header {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            margin-bottom: 1rem;
+        }
+        
+        .patient-header img {
+            width: 80px;
+            height: 80px;
+            border-radius: 50%;
+            object-fit: cover;
+            border: 3px solid #2372E0;
+        }
+        
+        .patient-info h1 {
+            margin: 0;
+            padding: 0;
+        }
+        
+        .patient-info p {
+            margin: 0;
+            padding: 0;
+            color: #6B7682;
+            font-style: italic;
+        }
         </style>
         """, unsafe_allow_html=True)
     
@@ -794,8 +839,13 @@ Provide comprehensive feedback."""
         # Get current patient config
         patient_config = get_patient_config(st.session_state.selected_patient)
         
-        st.title(f"{patient_config['icon']} {patient_config['display_name']}")
-        st.caption(f"*{patient_config['scenario_type']}*")
+        # Display patient header with icon
+        col1, col2 = st.columns([1, 10])
+        with col1:
+            st.image(patient_config['icon'], width=80)
+        with col2:
+            st.title(patient_config['display_name'])
+            st.caption(f"*{patient_config['scenario_type']}*")
         
         with st.sidebar:
             st.markdown("## 🏥 Patient Selection")
