@@ -5,7 +5,7 @@ PATIENT_SCENARIOS = {
         "display_name": "Mrs. Miller - Teach Back",
         "scenario_type": "High Value Care",
         "prompt_id": "pmpt_691cc606dfb4819491acd1328e0488dd0854e783a6e7f3ec",
-        "prompt_version": "4",
+        "prompt_version": "5",
         "feedback_assistant_id": "asst_J2yNXKyAVxZ9yhxVD1o4roNh",
         "description": "Practice teach-back communication with Mrs. Miller about her heart medication.",
         "icon": "https://i.postimg.cc/FsQTx24r/Mrs-Miller.png"
