@@ -8,7 +8,7 @@ PATIENT_SCENARIOS = {
         "prompt_version": "4",
         "feedback_assistant_id": "asst_J2yNXKyAVxZ9yhxVD1o4roNh",
         "description": "Practice teach-back communication with Mrs. Miller about her heart medication.",
-        "icon": "👩‍⚕️"
+        "icon": "https://i.postimg.cc/FsQTx24r/Mrs-Miller.png"
     },
     "Mr. Aiken (Breaking Bad News)": {
         "display_name": "Mr. Aiken - Breaking Bad News",
@@ -17,7 +17,7 @@ PATIENT_SCENARIOS = {
         "prompt_version": "1",
         "feedback_assistant_id": "asst_c7h4U9fu58pgXqGVJkzQyQtr",  
         "description": "Practice delivering difficult news with empathy and clarity.",
-        "icon": "👨"
+        "icon": "https://i.postimg.cc/prgb0kPz/Mr-Aiken.png"
     }
 }
 
