@@ -886,18 +886,27 @@ Provide comprehensive feedback."""
             current_patient = get_patient_config(st.session_state.selected_patient)
             st.markdown(f'<div style="background-color: rgba(255,255,255,0.15); padding: 8px 12px; border-radius: 6px; margin-bottom: 10px; border-left: 3px solid white;"><strong>Current:</strong> {current_patient["display_name"]}</div>', unsafe_allow_html=True)
             
-            # Patient selector - force display of current selection
+            # Patient selector
             all_patients = get_all_patients()
-            current_index = all_patients.index(st.session_state.selected_patient)
+            patient_names = [get_patient_config(p)["display_name"] for p in all_patients]
+            current_name = current_patient["display_name"]
             
-            selected = st.selectbox(
+            selected_name = st.selectbox(
                 "Choose a patient:",
-                options=all_patients,
-                index=current_index,
-                format_func=lambda x: get_patient_config(x)["display_name"],
+                options=patient_names,
+                index=patient_names.index(current_name),
                 key="patient_selector",
                 help="Select which patient scenario you want to practice"
             )
+            
+            # Find the key for the selected name
+            selected_key = None
+            for key in all_patients:
+                if get_patient_config(key)["display_name"] == selected_name:
+                    selected_key = key
+                    break
+            
+            selected = selected_key if selected_key else st.session_state.selected_patient
             
             # Update if changed
             if selected != st.session_state.selected_patient:
