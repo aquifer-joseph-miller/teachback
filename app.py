@@ -766,16 +766,16 @@ Provide comprehensive feedback."""
         
         /* Sidebar selectbox - make it more obvious */
         [data-testid="stSidebar"] .stSelectbox > div > div {
-            background-color: rgba(255, 255, 255, 0.2) !important;
-            border: 2px solid rgba(255, 255, 255, 0.4) !important;
+            background-color: rgba(255, 255, 255, 0.25) !important;
+            border: 2px solid rgba(255, 255, 255, 0.5) !important;
             border-radius: 8px;
             padding: 0.5rem;
             cursor: pointer;
         }
         
         [data-testid="stSidebar"] .stSelectbox > div > div:hover {
-            background-color: rgba(255, 255, 255, 0.3) !important;
-            border-color: rgba(255, 255, 255, 0.6) !important;
+            background-color: rgba(255, 255, 255, 0.35) !important;
+            border-color: rgba(255, 255, 255, 0.7) !important;
         }
         
         [data-testid="stSidebar"] .stSelectbox svg {
@@ -787,23 +787,39 @@ Provide comprehensive feedback."""
             color: white !important;
         }
         
-        /* Make selectbox text white */
-        [data-testid="stSidebar"] .stSelectbox [data-baseweb="select"] span {
+        /* Make selectbox text white and bold */
+        [data-testid="stSidebar"] .stSelectbox [data-baseweb="select"] span,
+        [data-testid="stSidebar"] .stSelectbox [data-baseweb="select"] div {
             color: white !important;
+            font-weight: 600 !important;
+        }
+        
+        /* Selectbox label */
+        [data-testid="stSidebar"] .stSelectbox label {
+            color: white !important;
+            font-weight: 500 !important;
+            font-size: 0.9rem !important;
         }
         
         /* Sidebar button styling - make "Start New Session" button more visible */
         [data-testid="stSidebar"] .stButton > button {
-            background-color: rgba(255, 255, 255, 0.95) !important;
+            background-color: white !important;
             color: #1B5599 !important;
             border: 2px solid white !important;
-            font-weight: 600 !important;
+            font-weight: 700 !important;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.15) !important;
         }
         
         [data-testid="stSidebar"] .stButton > button:hover {
-            background-color: white !important;
+            background-color: #F0F7FF !important;
             color: #002362 !important;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.2) !important;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.25) !important;
+            transform: translateY(-1px);
+        }
+        
+        [data-testid="stSidebar"] .stButton > button span {
+            color: #1B5599 !important;
+            font-weight: 700 !important;
         }
         
         /* Main title */
@@ -858,13 +874,13 @@ Provide comprehensive feedback."""
             st.markdown("## 🏥 Patient Selection")
             st.markdown('<p style="font-size: 0.9rem; margin-bottom: 0.5rem; opacity: 0.9;">Select a patient scenario:</p>', unsafe_allow_html=True)
             
-            # Patient selector
+            # Patient selector - show label to make it clear
             selected = st.selectbox(
                 "Choose a patient:",
                 options=get_all_patients(),
                 index=get_all_patients().index(st.session_state.selected_patient),
                 format_func=lambda x: get_patient_config(x)["display_name"],
-                label_visibility="collapsed"
+                key="patient_selector"
             )
             
             # Update if changed
