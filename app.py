@@ -782,14 +782,13 @@ Provide comprehensive feedback."""
             fill: white !important;
         }
         
-        [data-testid="stSidebar"] .stSelectbox [data-baseweb="select"] > div {
-            background-color: transparent !important;
-            color: white !important;
-        }
-        
-        /* Make selectbox text white and bold */
+        /* Force all selectbox text to be white - more aggressive */
+        [data-testid="stSidebar"] .stSelectbox [data-baseweb="select"] > div,
+        [data-testid="stSidebar"] .stSelectbox [data-baseweb="select"] > div > div,
         [data-testid="stSidebar"] .stSelectbox [data-baseweb="select"] span,
-        [data-testid="stSidebar"] .stSelectbox [data-baseweb="select"] div {
+        [data-testid="stSidebar"] .stSelectbox [data-baseweb="select"] div[role="button"],
+        [data-testid="stSidebar"] .stSelectbox div[data-baseweb="select"] * {
+            background-color: transparent !important;
             color: white !important;
             font-weight: 600 !important;
         }
@@ -797,8 +796,18 @@ Provide comprehensive feedback."""
         /* Selectbox label */
         [data-testid="stSidebar"] .stSelectbox label {
             color: white !important;
-            font-weight: 500 !important;
-            font-size: 0.9rem !important;
+            font-weight: 600 !important;
+            font-size: 0.95rem !important;
+            margin-bottom: 0.5rem !important;
+        }
+        
+        /* Dropdown menu items */
+        [data-testid="stSidebar"] .stSelectbox [role="listbox"] {
+            background-color: #1B5599 !important;
+        }
+        
+        [data-testid="stSidebar"] .stSelectbox [role="option"] {
+            color: white !important;
         }
         
         /* Sidebar button styling - make "Start New Session" button more visible */
@@ -872,15 +881,22 @@ Provide comprehensive feedback."""
         
         with st.sidebar:
             st.markdown("## 🏥 Patient Selection")
-            st.markdown('<p style="font-size: 0.9rem; margin-bottom: 0.5rem; opacity: 0.9;">Select a patient scenario:</p>', unsafe_allow_html=True)
             
-            # Patient selector - show label to make it clear
+            # Show current selection explicitly
+            current_patient = get_patient_config(st.session_state.selected_patient)
+            st.markdown(f'<div style="background-color: rgba(255,255,255,0.15); padding: 8px 12px; border-radius: 6px; margin-bottom: 10px; border-left: 3px solid white;"><strong>Current:</strong> {current_patient["display_name"]}</div>', unsafe_allow_html=True)
+            
+            # Patient selector - force display of current selection
+            all_patients = get_all_patients()
+            current_index = all_patients.index(st.session_state.selected_patient)
+            
             selected = st.selectbox(
                 "Choose a patient:",
-                options=get_all_patients(),
-                index=get_all_patients().index(st.session_state.selected_patient),
+                options=all_patients,
+                index=current_index,
                 format_func=lambda x: get_patient_config(x)["display_name"],
-                key="patient_selector"
+                key="patient_selector",
+                help="Select which patient scenario you want to practice"
             )
             
             # Update if changed
