@@ -68,6 +68,14 @@ class VPERealtimeApp:
         patient_icon = patient_config["icon"]
         patient_name = patient_config["display_name"].split(" - ")[0]
         
+        # Determine if icon is URL or emoji
+        if patient_icon.startswith('http'):
+            patient_icon_html = f'<img src="{patient_icon}" style="width: 32px; height: 32px; border-radius: 50%; vertical-align: middle; margin-right: 8px;">'
+            patient_icon_text = ""  # No emoji for debug logs
+        else:
+            patient_icon_html = patient_icon
+            patient_icon_text = patient_icon
+        
         component_html = f"""
         <!DOCTYPE html>
         <html>
@@ -246,16 +254,6 @@ class VPERealtimeApp:
                     margin-bottom: 8px;
                     font-size: 14px;
                     letter-spacing: 0.3px;
-                    display: flex;
-                    align-items: center;
-                    gap: 8px;
-                }}
-                
-                .speaker img {{
-                    width: 24px;
-                    height: 24px;
-                    border-radius: 50%;
-                    object-fit: cover;
                 }}
                 
                 .user .speaker {{
@@ -370,7 +368,7 @@ class VPERealtimeApp:
         <body>
             <div class="container">
                 <div class="header">
-                    <h2>🎤 Voice Conversation with {patient_name}</h2>
+                    <h2>{patient_icon_html} Voice Conversation with {patient_name}</h2>
                 </div>
                 
                 <div class="content">
@@ -408,8 +406,6 @@ class VPERealtimeApp:
                 let dataChannel = null;
                 let audioStream = null;
                 const ephemeralToken = "{ephemeral_token}";
-                const patientIcon = "{patient_icon}";
-                const patientName = "{patient_name}";
                 let conversationTranscript = [];
                 
                 function debugLog(msg) {{
@@ -494,7 +490,7 @@ class VPERealtimeApp:
                         if (event.type === 'response.audio_transcript.done') {{
                             const text = event.transcript;
                             if (text) {{
-                                debugLog('Patient responded');
+                                debugLog('{patient_icon_text} Patient responded');
                                 addMessage('assistant', text);
                                 conversationTranscript.push({{ role: 'assistant', content: text }});
                             }}
@@ -516,11 +512,10 @@ class VPERealtimeApp:
                     
                     const speaker = document.createElement('div');
                     speaker.className = 'speaker';
-                    
                     if (role === 'user') {{
                         speaker.textContent = '🎓 STUDENT';
                     }} else {{
-                        speaker.innerHTML = `<img src="${{patientIcon}}" alt="Patient"> ${{patientName.toUpperCase()}}`;
+                        speaker.innerHTML = '{patient_icon_html} {patient_name.upper()}';
                     }}
                     
                     const text = document.createElement('div');
@@ -715,8 +710,18 @@ Provide comprehensive feedback."""
         
         /* Info boxes */
         .stInfo {
-            background-color: #D0DEF4;
+            background-color: #F0F7FF;
             border-left: 4px solid #2372E0;
+            padding: 1.5rem;
+            border-radius: 8px;
+        }
+        
+        .stInfo p, .stInfo ul, .stInfo li {
+            color: #293346 !important;
+        }
+        
+        .stInfo strong {
+            color: #1B5599;
         }
         
         /* Success boxes */
@@ -779,6 +784,26 @@ Provide comprehensive feedback."""
         
         [data-testid="stSidebar"] .stSelectbox [data-baseweb="select"] > div {
             background-color: transparent !important;
+            color: white !important;
+        }
+        
+        /* Make selectbox text white */
+        [data-testid="stSidebar"] .stSelectbox [data-baseweb="select"] span {
+            color: white !important;
+        }
+        
+        /* Sidebar button styling - make "Start New Session" button more visible */
+        [data-testid="stSidebar"] .stButton > button {
+            background-color: rgba(255, 255, 255, 0.95) !important;
+            color: #1B5599 !important;
+            border: 2px solid white !important;
+            font-weight: 600 !important;
+        }
+        
+        [data-testid="stSidebar"] .stButton > button:hover {
+            background-color: white !important;
+            color: #002362 !important;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.2) !important;
         }
         
         /* Main title */
@@ -792,34 +817,6 @@ Provide comprehensive feedback."""
         hr {
             border-color: #E0E4E8;
             margin: 2rem 0;
-        }
-        
-        /* Patient header with icon */
-        .patient-header {
-            display: flex;
-            align-items: center;
-            gap: 20px;
-            margin-bottom: 1rem;
-        }
-        
-        .patient-header img {
-            width: 80px;
-            height: 80px;
-            border-radius: 50%;
-            object-fit: cover;
-            border: 3px solid #2372E0;
-        }
-        
-        .patient-info h1 {
-            margin: 0;
-            padding: 0;
-        }
-        
-        .patient-info p {
-            margin: 0;
-            padding: 0;
-            color: #6B7682;
-            font-style: italic;
         }
         </style>
         """, unsafe_allow_html=True)
@@ -839,13 +836,23 @@ Provide comprehensive feedback."""
         # Get current patient config
         patient_config = get_patient_config(st.session_state.selected_patient)
         
-        # Display patient header with icon
-        col1, col2 = st.columns([1, 10])
-        with col1:
-            st.image(patient_config['icon'], width=80)
-        with col2:
-            st.title(patient_config['display_name'])
+        # Display title with patient image if URL, otherwise emoji
+        if patient_config['icon'].startswith('http'):
+            col1, col2 = st.columns([1, 10])
+            with col1:
+                st.image(patient_config['icon'], width=80)
+            with col2:
+                st.title(patient_config['display_name'])
+                st.caption(f"*{patient_config['scenario_type']}*")
+        else:
+            st.title(f"{patient_config['icon']} {patient_config['display_name']}")
             st.caption(f"*{patient_config['scenario_type']}*")
+        
+        # Display scenario box
+        st.markdown("### 📋 Your Scenario")
+        st.info(patient_config["scenario_text"])
+        
+        st.markdown("---")
         
         with st.sidebar:
             st.markdown("## 🏥 Patient Selection")
