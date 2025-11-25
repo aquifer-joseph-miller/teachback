@@ -32,7 +32,7 @@ Ms. Miller is in her room with her daughter Mary. You may begin when ready.
         "display_name": "Mr. Aiken - Breaking Bad News",
         "scenario_type": "Communication Skills",
         "prompt_id": "pmpt_691efa56729c819588300e3506331c5f090acf6790ac551d",
-        "prompt_version": "1",
+        "prompt_version": "2",
         "feedback_assistant_id": "asst_c7h4U9fu58pgXqGVJkzQyQtr",
         "description": "Practice delivering difficult news with empathy and clarity.",
         "icon": "https://i.postimg.cc/prgb0kPz/Mr-Aiken.png",
